@@ -607,18 +607,21 @@ export default function App() {
     );
     if (!ok) return;
 
+    let cloudNote = "";
     if (isCloudUser) {
       setGroupBusy(true);
       try {
-        await deleteSharedGroup(group);
+        const result = await deleteSharedGroup(group);
+        if (result === "left") {
+          cloudNote = " (tu as quitté le groupe partagé)";
+        } else if (result === "local_only") {
+          cloudNote = " (retiré de ton compte ; rien à nettoyer côté cloud)";
+        }
       } catch (error) {
-        setGroupMessage(
-          `${formatCloudError(error)} Si tu viens de mettre à jour les règles, republie firestore.rules puis réessaie.`,
-        );
+        cloudNote = ` — cloud : ${formatCloudError(error)}`;
+      } finally {
         setGroupBusy(false);
-        return;
       }
-      setGroupBusy(false);
     }
 
     setState((current) => ({
@@ -633,7 +636,7 @@ export default function App() {
       ),
     }));
     if (groupId === group.id) setGroupId("");
-    setGroupMessage(`Groupe « ${group.name} » supprimé.`);
+    setGroupMessage(`Groupe « ${group.name} » retiré.${cloudNote}`);
   }
 
   useEffect(() => {

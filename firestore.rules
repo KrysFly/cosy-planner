@@ -10,7 +10,16 @@ service cloud.firestore {
     }
 
     function isGroupAdmin() {
-      return signedIn() && request.auth.uid in resource.data.adminIds;
+      return signedIn()
+        && resource.data.adminIds is list
+        && resource.data.adminIds.hasAny([request.auth.uid]);
+    }
+
+    function isSoleMember() {
+      return signedIn()
+        && resource.data.memberIds is list
+        && resource.data.memberIds.hasAny([request.auth.uid])
+        && resource.data.memberIds.size() == 1;
     }
 
     /** Creator is sole admin and sole member on create. */
@@ -25,17 +34,29 @@ service cloud.firestore {
         && request.resource.data.memberIds is list
         && request.resource.data.adminIds.size() == 1
         && request.resource.data.memberIds.size() == 1
-        && request.auth.uid in request.resource.data.adminIds
-        && request.auth.uid in request.resource.data.memberIds;
+        && request.resource.data.adminIds.hasAny([request.auth.uid])
+        && request.resource.data.memberIds.hasAny([request.auth.uid]);
     }
 
     /** Guest may only add their own uid to memberIds. */
     function isSelfJoin() {
       return signedIn()
+        && resource.data.memberIds is list
         && !(request.auth.uid in resource.data.memberIds)
         && request.auth.uid in request.resource.data.memberIds
         && request.resource.data.memberIds.size() == resource.data.memberIds.size() + 1
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds']);
+    }
+
+    /** Member may remove only themselves from memberIds / adminIds. */
+    function isSelfLeave() {
+      return signedIn()
+        && resource.data.memberIds is list
+        && request.auth.uid in resource.data.memberIds
+        && !(request.auth.uid in request.resource.data.memberIds)
+        && request.resource.data.memberIds.size() == resource.data.memberIds.size() - 1
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['memberIds', 'adminIds']);
     }
 
     match /users/{userId} {
@@ -49,20 +70,15 @@ service cloud.firestore {
         && request.resource.data.groupId is string
         && request.resource.data.groupId.size() > 0;
       allow update: if false;
-      // After the group doc is removed, admins (or anyone signed-in for orphans) can drop the invite.
-      allow delete: if signedIn()
-        && resource.data.groupId is string
-        && (
-          !exists(/databases/$(database)/documents/groups/$(resource.data.groupId))
-          || request.auth.uid in get(/databases/$(database)/documents/groups/$(resource.data.groupId)).data.adminIds
-        );
+      // Invite codes are unguessable enough for this app; any signed-in user may clear one.
+      allow delete: if signedIn();
     }
 
     match /groups/{groupId} {
       allow read: if signedIn();
       allow create: if validGroupCreate();
-      allow update: if isGroupAdmin() || isSelfJoin();
-      allow delete: if isGroupAdmin();
+      allow update: if isGroupAdmin() || isSelfJoin() || isSelfLeave();
+      allow delete: if isGroupAdmin() || isSoleMember();
     }
   }
 }

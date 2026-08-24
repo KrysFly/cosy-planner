@@ -6,6 +6,7 @@ import {
   type User as FirebaseUser,
 } from "firebase/auth";
 import {
+  arrayRemove,
   arrayUnion,
   deleteDoc,
   doc,
@@ -241,6 +242,8 @@ export async function createSharedGroup(
   ownerId: string,
   name: string,
 ): Promise<Group> {
+  const auth = getFirebaseAuth();
+  const ownerUid = auth?.currentUser?.uid ?? ownerId;
   const db = requireDb();
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Nom de groupe requis");
@@ -250,8 +253,8 @@ export async function createSharedGroup(
       id: uid("group"),
       name: trimmed,
       inviteCode: generateInviteCode(),
-      adminIds: [ownerId],
-      memberIds: [ownerId],
+      adminIds: [ownerUid],
+      memberIds: [ownerUid],
     };
     const inviteRef = doc(db, "invites", group.inviteCode);
     const existing = await getDoc(inviteRef);
@@ -306,12 +309,19 @@ export async function joinSharedGroupByCode(
   return { ok: true, group, alreadyMember: false };
 }
 
+export type DeleteSharedGroupResult = "deleted" | "left" | "local_only";
+
 /**
- * Deletes shared group + invite index when they exist in Firestore.
- * Skips missing docs (avoids permission-denied on null `resource` in rules).
- * Resolves the real group id via the invite code when local id is stale.
+ * Deletes shared group + invite when allowed; otherwise leaves the group or
+ * skips cloud (caller still removes the local copy).
  */
-export async function deleteSharedGroup(group: Group): Promise<void> {
+export async function deleteSharedGroup(group: Group): Promise<DeleteSharedGroupResult> {
+  const auth = getFirebaseAuth();
+  const uid = auth?.currentUser?.uid;
+  if (!uid) {
+    throw new Error("Session Firebase absente : déconnecte-toi puis reconnecte-toi avec Google.");
+  }
+
   const db = requireDb();
   const code = group.inviteCode?.trim().toUpperCase() ?? "";
 
@@ -324,23 +334,42 @@ export async function deleteSharedGroup(group: Group): Promise<void> {
     }
   }
 
+  let result: DeleteSharedGroupResult = "local_only";
   const groupRef = doc(db, "groups", targetId);
   const groupSnap = await getDoc(groupRef);
+
   if (groupSnap.exists()) {
-    await deleteDoc(groupRef);
+    const data = groupSnap.data() as Partial<Group>;
+    const admins = Array.isArray(data.adminIds) ? data.adminIds.map(String) : [];
+    const members = Array.isArray(data.memberIds) ? data.memberIds.map(String) : [];
+    const isAdmin = admins.includes(uid);
+    const isSoleMember = members.includes(uid) && members.length === 1;
+
+    if (isAdmin || isSoleMember) {
+      await deleteDoc(groupRef);
+      result = "deleted";
+    } else if (members.includes(uid)) {
+      await updateDoc(groupRef, {
+        memberIds: arrayRemove(uid),
+        adminIds: arrayRemove(uid),
+      });
+      result = "left";
+    }
   }
 
   if (code) {
     const inviteRef = doc(db, "invites", code);
     const inviteSnap = await getDoc(inviteRef);
-    if (inviteSnap.exists()) {
+    if (inviteSnap.exists() && (result === "deleted" || !groupSnap.exists())) {
       try {
         await deleteDoc(inviteRef);
       } catch {
-        // Orphan invite is non-blocking; group is already gone / local cleanup follows.
+        // Invite cleanup is best-effort.
       }
     }
   }
+
+  return result;
 }
 
 /** Shareable invite URL for the current deployment (respects Vite base). */
