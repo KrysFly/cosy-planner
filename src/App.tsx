@@ -196,12 +196,13 @@ export default function App() {
   function addTask(event: FormEvent) {
     event.preventDefault();
     if (!user || !title.trim()) return;
-    if (startDate && endDate && startDate > endDate) return;
+    const spanStart = startDate || selectedDate;
+    if (endDate && spanStart > endDate) return;
     const task: Task = {
       id: uid("task"),
       title: title.trim(),
       done: false,
-      date: selectedDate,
+      date: startDate || selectedDate,
       bullet,
       groupId: groupId || null,
       createdBy: user.id,
@@ -591,7 +592,7 @@ export default function App() {
                       className="field"
                       type="date"
                       value={endDate}
-                      min={startDate || undefined}
+                      min={startDate || selectedDate}
                       onChange={(event) => setEndDate(event.target.value)}
                       aria-label="Date de fin"
                     />
@@ -710,13 +711,19 @@ export default function App() {
                       </span>
                       <div className="task-body">
                         <span>{task.title}</span>
-                        {task.recurrence !== "once" && (
+                        {task.recurrence !== "once" ? (
                           <small className="task-meta">
                             {RECURRENCE_LABELS[task.recurrence]}
                             {task.startDate || task.endDate
-                              ? ` · ${task.startDate ?? "…"} → ${task.endDate ?? "…"}`
+                              ? ` · ${task.startDate ?? task.date} → ${task.endDate ?? "…"}`
                               : ""}
                           </small>
+                        ) : (
+                          task.endDate && (
+                            <small className="task-meta">
+                              {task.startDate ?? task.date} → {task.endDate}
+                            </small>
+                          )
                         )}
                       </div>
                       <button className="tiny" type="button" onClick={() => removeTask(task.id)}>

@@ -160,6 +160,54 @@ function dayOfMonth(iso: string): number {
   return parseIsoParts(iso).d;
 }
 
+function addDaysIso(iso: string, delta: number): string {
+  const { y, m, d } = parseIsoParts(iso);
+  const date = new Date(y, m - 1, d);
+  date.setDate(date.getDate() + delta);
+  return todayIso(date);
+}
+
+/** Inclusive day count between two YYYY-MM-DD dates (1 if same day). */
+function inclusiveSpanDays(start: string, end: string): number {
+  if (end < start) return 1;
+  const a = parseIsoParts(start);
+  const b = parseIsoParts(end);
+  const ms =
+    new Date(b.y, b.m - 1, b.d).getTime() - new Date(a.y, a.m - 1, a.d).getTime();
+  return Math.floor(ms / 86_400_000) + 1;
+}
+
+/** First day of the (first) occurrence span. */
+function occurrenceAnchor(task: Task): string {
+  return task.startDate ?? task.date;
+}
+
+/** How many days each occurrence covers (from début→fin, or 1 day). */
+function occurrenceDurationDays(task: Task): number {
+  const anchor = occurrenceAnchor(task);
+  if (!task.endDate) return 1;
+  return inclusiveSpanDays(anchor, task.endDate);
+}
+
+/** True if an occurrence of this task starts on `iso`. */
+function isOccurrenceStart(task: Task, iso: string): boolean {
+  const anchor = occurrenceAnchor(task);
+  if (iso < anchor) return false;
+
+  switch (task.recurrence) {
+    case "once":
+      return iso === anchor;
+    case "daily":
+      return true;
+    case "weekly":
+      return weekdayIndex(iso) === weekdayIndex(anchor);
+    case "monthly":
+      return dayOfMonth(iso) === dayOfMonth(anchor);
+    default:
+      return false;
+  }
+}
+
 export function normalizeTask(raw: Partial<Task> & Pick<Task, "id" | "title" | "createdBy">): Task {
   return {
     id: raw.id,
@@ -189,23 +237,17 @@ export function normalizeTask(raw: Partial<Task> & Pick<Task, "id" | "title" | "
   };
 }
 
-/** True if the task should appear on the given YYYY-MM-DD day. */
+/**
+ * True if the task should appear on the given YYYY-MM-DD day.
+ * Début/fin define the duration of one occurrence (inclusive).
+ * Recurring tasks repeat that same multi-day span on each occurrence.
+ */
 export function taskOccursOn(task: Task, iso: string): boolean {
-  if (task.startDate && iso < task.startDate) return false;
-  if (task.endDate && iso > task.endDate) return false;
-
-  switch (task.recurrence) {
-    case "once":
-      return iso === task.date;
-    case "daily":
-      return true;
-    case "weekly":
-      return weekdayIndex(iso) === weekdayIndex(task.date);
-    case "monthly":
-      return dayOfMonth(iso) === dayOfMonth(task.date);
-    default:
-      return false;
+  const duration = occurrenceDurationDays(task);
+  for (let offset = 0; offset < duration; offset += 1) {
+    if (isOccurrenceStart(task, addDaysIso(iso, -offset))) return true;
   }
+  return false;
 }
 
 export function isTaskDoneOn(task: Task, iso: string): boolean {
