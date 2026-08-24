@@ -13,7 +13,7 @@ Outil de planification en ligne, façon bullet journal : interface pastel, anima
 - Compteur de verres d’eau, activable si on veut
 - Déploiement **GitHub Pages** (pipeline Actions) — GitLab Pages en secours si des minutes CI restent
 
-Les données sont stockées dans le navigateur (`localStorage`). C’est suffisant pour poser l’UI et tester Pages. Un vrai partage entre appareils demandera un backend plus tard.
+Avec un compte **Google** et Firebase configuré, tout le planner (tâches, groupes, eau, totem) est synchronisé dans **Cloud Firestore**. Le **mode démo** reste en `localStorage` sur l’appareil.
 
 ## Lancer en local
 
@@ -51,6 +51,30 @@ Sur **GitHub** : **Settings → Secrets and variables → Actions → Variables*
 (variable de dépôt, pas secrète : elle est publique dans le JS). Relance le workflow après l’avoir ajoutée.
 
 Sans cette variable, **Continuer en mode démo** reste disponible.
+
+## Firebase / Cloud Firestore
+
+La sync cloud (comptes Google) utilise Firebase Auth + Firestore.
+
+1. Ouvre [Firebase Console](https://console.firebase.google.com/) et crée (ou réutilise) un projet — idéalement le même GCP que l’OAuth Google.
+2. **Authentication → Sign-in method → Google** : activer. Domaines autorisés : `localhost`, `krysfly.github.io`.
+3. **Firestore Database** : créer une base (mode production), puis coller les règles de [`firestore.rules`](firestore.rules) (chaque user ne lit/écrit que `users/{uid}`).
+4. **Paramètres du projet → Vos applications → Web** : enregistrer l’app et copier la config.
+
+Localement, complète `.env` (voir `.env.example`) :
+
+```
+VITE_FIREBASE_API_KEY=…
+VITE_FIREBASE_AUTH_DOMAIN=….firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=…
+VITE_FIREBASE_STORAGE_BUCKET=….appspot.com
+VITE_FIREBASE_MESSAGING_SENDER_ID=…
+VITE_FIREBASE_APP_ID=…
+```
+
+Sur **GitHub** : **Settings → Secrets and variables → Actions → Variables**, ajoute les mêmes `VITE_FIREBASE_*` (publiques dans le JS buildé). Relance le workflow Pages.
+
+Sans Firebase, la connexion Google peut s’afficher mais la sync cloud reste inactive ; le mode démo fonctionne toujours.
 
 ## GitHub Pages
 

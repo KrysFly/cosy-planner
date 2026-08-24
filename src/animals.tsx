@@ -837,7 +837,7 @@ function Shadow({ fill }: { fill: string }) {
 
 export function KawaiiAnimal({ animal, size = 88 }: Props) {
   const def = BY_ID[animal] ?? BY_ID.otter;
-  const c = def.colors;
+  const c: AnimalColors = def.colors;
   const common = { width: size, height: size, viewBox: "0 0 120 120" };
   const shape = def.shape;
 

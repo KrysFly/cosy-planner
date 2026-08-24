@@ -25,7 +25,13 @@ export type Task = {
   endDate: string | null;
   icon: string;
   color: string;
+  /** Days on which this task was checked off (per-day validation). */
   doneDates: string[];
+  /**
+   * Master TODO: undated standing item, shown every day at the top.
+   * Completion is always tracked per day via doneDates.
+   */
+  master: boolean;
 };
 
 export type Group = {
@@ -42,15 +48,63 @@ export type WaterDay = {
   enabled: boolean;
 };
 
-export type PlannerState = {
-  user: User | null;
+export type MoodId = "great" | "good" | "ok" | "low" | "bad";
+
+export type MoodDay = {
+  mood: MoodId;
+};
+
+export const MOODS: ReadonlyArray<{ id: MoodId; emoji: string; label: string }> = [
+  { id: "great", emoji: "😄", label: "Super" },
+  { id: "good", emoji: "🙂", label: "Bien" },
+  { id: "ok", emoji: "😐", label: "OK" },
+  { id: "low", emoji: "😔", label: "Bof" },
+  { id: "bad", emoji: "😢", label: "Difficile" },
+];
+
+export function moodEmoji(id: MoodId | undefined | null): string | null {
+  if (!id) return null;
+  return MOODS.find((m) => m.id === id)?.emoji ?? null;
+}
+
+function isMoodId(value: unknown): value is MoodId {
+  return (
+    value === "great" ||
+    value === "good" ||
+    value === "ok" ||
+    value === "low" ||
+    value === "bad"
+  );
+}
+
+export function normalizeMoodByDate(
+  raw: unknown,
+): Record<string, MoodDay> {
+  if (!raw || typeof raw !== "object") return {};
+  const out: Record<string, MoodDay> = {};
+  for (const [iso, entry] of Object.entries(raw as Record<string, unknown>)) {
+    if (!entry || typeof entry !== "object") continue;
+    const mood = (entry as { mood?: unknown }).mood;
+    if (isMoodId(mood)) out[iso] = { mood };
+  }
+  return out;
+}
+
+/** Planner payload stored in Firestore (no auth user). */
+export type PlannerData = {
   tasks: Task[];
   groups: Group[];
   waterByDate: Record<string, WaterDay>;
   waterDefaultGoal: number;
   waterEnabled: boolean;
+  /** Per-day mood (YYYY-MM-DD → MoodDay). */
+  moodByDate: Record<string, MoodDay>;
   /** Animal totem id — drives UI theme colors. */
   totemAnimalId: string;
+};
+
+export type PlannerState = PlannerData & {
+  user: User | null;
 };
 
 export const STORAGE_KEY = "cosy-planner-v1";
@@ -142,6 +196,7 @@ export function emptyState(): PlannerState {
     waterByDate: {},
     waterDefaultGoal: 8,
     waterEnabled: false,
+    moodByDate: {},
     totemAnimalId: "bear",
   };
 }
@@ -209,11 +264,23 @@ function isOccurrenceStart(task: Task, iso: string): boolean {
 }
 
 export function normalizeTask(raw: Partial<Task> & Pick<Task, "id" | "title" | "createdBy">): Task {
+  const master = Boolean(raw.master);
+  const date = raw.date || todayIso();
+  let doneDates = Array.isArray(raw.doneDates) ? [...raw.doneDates] : [];
+  const done = Boolean(raw.done);
+  // Migrate legacy once tasks that only used the global `done` flag.
+  if (done && doneDates.length === 0 && !master) {
+    doneDates = [date];
+    if (raw.startDate && raw.endDate && raw.startDate <= raw.endDate) {
+      const span = inclusiveSpanDays(raw.startDate, raw.endDate);
+      doneDates = Array.from({ length: span }, (_, i) => addDaysIso(raw.startDate!, i));
+    }
+  }
   return {
     id: raw.id,
     title: raw.title,
-    done: Boolean(raw.done),
-    date: raw.date || todayIso(),
+    done,
+    date,
     bullet: raw.bullet === "event" || raw.bullet === "note" ? raw.bullet : "task",
     groupId: raw.groupId ?? null,
     createdBy: raw.createdBy,
@@ -233,16 +300,18 @@ export function normalizeTask(raw: Partial<Task> & Pick<Task, "id" | "title" | "
         : DEFAULT_BULLET_COLORS[
             raw.bullet === "event" || raw.bullet === "note" ? raw.bullet : "task"
           ],
-    doneDates: Array.isArray(raw.doneDates) ? raw.doneDates : [],
+    doneDates,
+    master,
   };
 }
 
 /**
  * True if the task should appear on the given YYYY-MM-DD day.
- * Début/fin define the duration of one occurrence (inclusive).
- * Recurring tasks repeat that same multi-day span on each occurrence.
+ * Master TODOs appear every day. Otherwise début/fin define the duration
+ * of one occurrence (inclusive); recurring tasks repeat that span.
  */
 export function taskOccursOn(task: Task, iso: string): boolean {
+  if (task.master) return true;
   const duration = occurrenceDurationDays(task);
   for (let offset = 0; offset < duration; offset += 1) {
     if (isOccurrenceStart(task, addDaysIso(iso, -offset))) return true;
@@ -250,21 +319,21 @@ export function taskOccursOn(task: Task, iso: string): boolean {
   return false;
 }
 
+/** Completion is always per calendar day (incl. multi-day and master tasks). */
 export function isTaskDoneOn(task: Task, iso: string): boolean {
-  if (task.recurrence === "once") return task.done;
   return task.doneDates.includes(iso);
 }
 
 export function toggleTaskOnDate(task: Task, iso: string): Task {
-  if (task.recurrence === "once") {
-    return { ...task, done: !task.done };
-  }
   const done = task.doneDates.includes(iso);
+  const doneDates = done
+    ? task.doneDates.filter((day) => day !== iso)
+    : [...task.doneDates, iso];
   return {
     ...task,
-    doneDates: done
-      ? task.doneDates.filter((day) => day !== iso)
-      : [...task.doneDates, iso],
+    doneDates,
+    // Keep legacy `done` in sync for once non-master tasks.
+    done: task.master || task.recurrence !== "once" ? false : doneDates.length > 0,
   };
 }
 
@@ -276,6 +345,7 @@ export function loadState(): PlannerState {
     const base = { ...emptyState(), ...parsed };
     return {
       ...base,
+      moodByDate: normalizeMoodByDate(parsed.moodByDate),
       totemAnimalId:
         typeof parsed.totemAnimalId === "string" && parsed.totemAnimalId
           ? parsed.totemAnimalId

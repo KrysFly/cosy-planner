@@ -8,12 +8,25 @@ import {
   type AnimalId,
 } from "./animals";
 import {
+  createDebouncedSaver,
+  loadUserPlanner,
+  plannerDataFromState,
+  saveUserPlanner,
+  signInWithGoogleIdToken,
+  signOutCloud,
+  watchAuth,
+  type SyncStatus,
+} from "./cloudSync";
+import { isFirebaseConfigured } from "./firebase";
+import {
   agendaGlyph,
   CUTE_ICONS,
   DEFAULT_BULLET_COLORS,
   inviteCode,
   isTaskDoneOn,
   loadState,
+  moodEmoji,
+  MOODS,
   parseJwtPayload,
   RECURRENCE_LABELS,
   saveState,
@@ -25,6 +38,7 @@ import {
   uid,
   type BulletKind,
   type Group,
+  type MoodId,
   type PlannerState,
   type Recurrence,
   type Task,
@@ -33,6 +47,7 @@ import {
 
 const WEEKDAYS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? "";
+const FIREBASE_READY = isFirebaseConfigured();
 
 function monthLabel(cursor: Date): string {
   return cursor.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
@@ -54,7 +69,7 @@ function daysInGrid(cursor: Date): Date[] {
   });
 }
 
-function userFromGoogle(credential: string): User {
+function userFromGoogleJwt(credential: string): User {
   const payload = parseJwtPayload(credential);
   return {
     id: `google-${payload.sub}`,
@@ -65,11 +80,36 @@ function userFromGoogle(credential: string): User {
   };
 }
 
+function syncLabel(status: SyncStatus): string | null {
+  switch (status) {
+    case "loading":
+      return "Chargement…";
+    case "saving":
+      return "Sync…";
+    case "synced":
+      return "Synchronisé";
+    case "error":
+      return "Erreur de sync";
+    case "offline":
+      return "Hors ligne";
+    default:
+      return null;
+  }
+}
+
 export default function App() {
-  const [state, setState] = useState<PlannerState>(() => loadState());
+  const [state, setState] = useState<PlannerState>(() => {
+    const loaded = loadState();
+    // Firebase session is restored via watchAuth; avoid a stale Google cache.
+    if (FIREBASE_READY && loaded.user?.provider === "google") {
+      return { ...loaded, user: null };
+    }
+    return loaded;
+  });
   const [cursor, setCursor] = useState(() => new Date());
   const [selectedDate, setSelectedDate] = useState(todayIso);
   const [title, setTitle] = useState("");
+  const [masterTitle, setMasterTitle] = useState("");
   const [bullet, setBullet] = useState<BulletKind>("task");
   const [groupId, setGroupId] = useState<string>("");
   const [recurrence, setRecurrence] = useState<Recurrence>("once");
@@ -84,11 +124,168 @@ export default function App() {
   const [groupMessage, setGroupMessage] = useState("");
   const [googleReady, setGoogleReady] = useState(false);
   const [totemOpen, setTotemOpen] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
+  const [authBusy, setAuthBusy] = useState(false);
   const totemRef = useRef<HTMLDivElement>(null);
+  const skipNextCloudSave = useRef(false);
+  const hydratedCloudUid = useRef<string | null>(null);
+  const cloudSaver = useRef(
+    createDebouncedSaver(500, (ok) => {
+      setSyncStatus(ok ? "synced" : "error");
+    }),
+  );
+
+  const user = state.user;
+  const isCloudUser = Boolean(user && user.provider === "google" && FIREBASE_READY);
 
   useEffect(() => {
-    saveState(state);
-  }, [state]);
+    if (!user) return;
+    if (user.provider === "demo" || !FIREBASE_READY) {
+      saveState(state);
+      return;
+    }
+    if (user.provider === "google") {
+      // Local cache for faster reopen; source of truth is Firestore.
+      saveState(state);
+      if (skipNextCloudSave.current) {
+        skipNextCloudSave.current = false;
+        return;
+      }
+      if (hydratedCloudUid.current !== user.id) return;
+      setSyncStatus("saving");
+      cloudSaver.current.schedule(user.id, plannerDataFromState(state));
+    }
+  }, [state, user]);
+
+  useEffect(() => {
+    const saver = cloudSaver.current;
+    return () => {
+      saver.cancel();
+    };
+  }, []);
+
+  const hydrateFromCloud = useCallback(
+    async (nextUser: User, localSnapshot: PlannerState) => {
+      if (!FIREBASE_READY || nextUser.provider !== "google") {
+        setState({ ...localSnapshot, user: nextUser });
+        return;
+      }
+      setSyncStatus("loading");
+      try {
+        const remote = await loadUserPlanner(nextUser.id);
+        if (remote) {
+          skipNextCloudSave.current = true;
+          hydratedCloudUid.current = nextUser.id;
+          setState({ ...remote, user: nextUser });
+          setSyncStatus("synced");
+          return;
+        }
+        const migrated = plannerDataFromState(localSnapshot);
+        await saveUserPlanner(nextUser.id, migrated);
+        skipNextCloudSave.current = true;
+        hydratedCloudUid.current = nextUser.id;
+        setState({ ...migrated, user: nextUser });
+        setSyncStatus("synced");
+      } catch {
+        skipNextCloudSave.current = true;
+        hydratedCloudUid.current = nextUser.id;
+        setState({ ...localSnapshot, user: nextUser });
+        setSyncStatus("error");
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!FIREBASE_READY) return;
+    let cancelled = false;
+    const unsub = watchAuth((authUser) => {
+      if (cancelled) return;
+      if (authUser) {
+        if (hydratedCloudUid.current === authUser.id) return;
+        void hydrateFromCloud(authUser, loadState());
+        return;
+      }
+      setState((current) => {
+        if (current.user?.provider === "google") {
+          hydratedCloudUid.current = null;
+          setSyncStatus("idle");
+          return { ...current, user: null };
+        }
+        return current;
+      });
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [hydrateFromCloud]);
+
+  const login = useCallback((nextUser: User) => {
+    setState((current) => ({ ...current, user: nextUser }));
+  }, []);
+
+  const handleGoogleCredential = useCallback(
+    async (credential: string) => {
+      setAuthBusy(true);
+      const localSnapshot = loadState();
+      try {
+        if (FIREBASE_READY) {
+          const nextUser = await signInWithGoogleIdToken(credential);
+          await hydrateFromCloud(nextUser, { ...localSnapshot, user: nextUser });
+        } else {
+          const nextUser = userFromGoogleJwt(credential);
+          hydratedCloudUid.current = null;
+          setSyncStatus("idle");
+          setState({ ...localSnapshot, user: nextUser });
+        }
+      } catch {
+        setSyncStatus("error");
+        const nextUser = userFromGoogleJwt(credential);
+        setState({ ...localSnapshot, user: nextUser });
+      } finally {
+        setAuthBusy(false);
+      }
+    },
+    [hydrateFromCloud],
+  );
+
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID || state.user) return;
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.onload = () => setGoogleReady(true);
+    document.head.appendChild(script);
+    return () => {
+      script.remove();
+    };
+  }, [state.user]);
+
+  useEffect(() => {
+    if (!googleReady || !GOOGLE_CLIENT_ID || state.user) return;
+    const slot = document.getElementById("google-signin");
+    if (!slot || !window.google) return;
+    slot.replaceChildren();
+    window.google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: (response) => {
+        void handleGoogleCredential(response.credential);
+      },
+      ux_mode: "popup",
+      auto_select: false,
+      itp_support: true,
+      use_fedcm_for_prompt: true,
+    });
+    window.google.accounts.id.renderButton(slot, {
+      theme: "outline",
+      size: "large",
+      shape: "pill",
+      text: "continue_with",
+      locale: "fr",
+      width: 320,
+    });
+  }, [googleReady, handleGoogleCredential, state.user]);
 
   const totem = getAnimal(state.totemAnimalId);
   const theme = useMemo(() => themeFromAnimal(totem), [totem]);
@@ -118,46 +315,6 @@ export default function App() {
     };
   }, [totemOpen]);
 
-  const login = useCallback((user: User) => {
-    setState((current) => ({ ...current, user }));
-  }, []);
-
-  useEffect(() => {
-    if (!GOOGLE_CLIENT_ID || state.user) return;
-    const script = document.createElement("script");
-    script.src = "https://accounts.google.com/gsi/client";
-    script.async = true;
-    script.onload = () => setGoogleReady(true);
-    document.head.appendChild(script);
-    return () => {
-      script.remove();
-    };
-  }, [state.user]);
-
-  useEffect(() => {
-    if (!googleReady || !GOOGLE_CLIENT_ID || state.user) return;
-    const slot = document.getElementById("google-signin");
-    if (!slot || !window.google) return;
-    slot.replaceChildren();
-    window.google.accounts.id.initialize({
-      client_id: GOOGLE_CLIENT_ID,
-      callback: (response) => login(userFromGoogle(response.credential)),
-      ux_mode: "popup",
-      auto_select: false,
-      itp_support: true,
-      use_fedcm_for_prompt: true,
-    });
-    window.google.accounts.id.renderButton(slot, {
-      theme: "outline",
-      size: "large",
-      shape: "pill",
-      text: "continue_with",
-      locale: "fr",
-      width: 320,
-    });
-  }, [googleReady, login, state.user]);
-
-  const user = state.user;
   const monthDays = useMemo(() => daysInGrid(cursor), [cursor]);
   const selectedAnimal = animalForDate(selectedDate);
   const myGroups = state.groups.filter((group) => user && group.memberIds.includes(user.id));
@@ -170,15 +327,20 @@ export default function App() {
     });
   }, [myGroups, state.tasks, user]);
 
-  const dayTasks = visibleTasks.filter((task) => taskOccursOn(task, selectedDate));
+  const dayTasks = visibleTasks.filter(
+    (task) => !task.master && taskOccursOn(task, selectedDate),
+  );
+  const masterTasks = visibleTasks.filter((task) => task.master);
 
   const water = state.waterByDate[selectedDate] ?? {
     goal: state.waterDefaultGoal,
     drunk: 0,
     enabled: state.waterEnabled,
   };
+  const dayMood = state.moodByDate[selectedDate]?.mood ?? null;
 
   const chosenIcon = customIcon.trim() || icon;
+  const statusText = isCloudUser ? syncLabel(syncStatus) : null;
 
   function update(partial: Partial<PlannerState>) {
     setState((current) => ({ ...current, ...partial }));
@@ -189,7 +351,17 @@ export default function App() {
     setTotemOpen(false);
   }
 
-  function logout() {
+  async function logout() {
+    cloudSaver.current.cancel();
+    hydratedCloudUid.current = null;
+    setSyncStatus("idle");
+    if (FIREBASE_READY && user?.provider === "google") {
+      try {
+        await signOutCloud();
+      } catch {
+        // Ignore sign-out errors; still clear local session.
+      }
+    }
     update({ user: null });
   }
 
@@ -212,10 +384,34 @@ export default function App() {
       icon: chosenIcon,
       color,
       doneDates: [],
+      master: false,
     };
     update({ tasks: [...state.tasks, task] });
     setTitle("");
     setCustomIcon("");
+  }
+
+  function addMasterTask(event: FormEvent) {
+    event.preventDefault();
+    if (!user || !masterTitle.trim()) return;
+    const task: Task = {
+      id: uid("master"),
+      title: masterTitle.trim(),
+      done: false,
+      date: todayIso(),
+      bullet: "task",
+      groupId: null,
+      createdBy: user.id,
+      recurrence: "once",
+      startDate: null,
+      endDate: null,
+      icon: "📌",
+      color: DEFAULT_BULLET_COLORS.task,
+      doneDates: [],
+      master: true,
+    };
+    update({ tasks: [...state.tasks, task] });
+    setMasterTitle("");
   }
 
   function toggleTask(id: string) {
@@ -309,6 +505,16 @@ export default function App() {
     });
   }
 
+  function setMood(mood: MoodId) {
+    const next = { ...state.moodByDate };
+    if (dayMood === mood) {
+      delete next[selectedDate];
+    } else {
+      next[selectedDate] = { mood };
+    }
+    update({ moodByDate: next });
+  }
+
   if (!user) {
     return (
       <div className="login">
@@ -324,11 +530,22 @@ export default function App() {
             ))}
           </div>
           <div id="google-signin" className="google-slot" />
+          {authBusy && <p className="hint">Connexion en cours…</p>}
           {!GOOGLE_CLIENT_ID && (
             <p className="hint">
               Ajoute <code>VITE_GOOGLE_CLIENT_ID</code> pour activer Google.
               En attendant, tu peux tester en mode démo.
             </p>
+          )}
+          {GOOGLE_CLIENT_ID && !FIREBASE_READY && (
+            <p className="hint">
+              Google est prêt, mais la sync cloud demande les variables{" "}
+              <code>VITE_FIREBASE_*</code> (voir README). Sans elles, les données
+              restent locales.
+            </p>
+          )}
+          {GOOGLE_CLIENT_ID && FIREBASE_READY && (
+            <p className="hint">Avec Google, ton planner est sauvegardé dans le cloud.</p>
           )}
           <button
             className="primary"
@@ -370,6 +587,7 @@ export default function App() {
             <h1>Cosy Planner</h1>
             <p>
               Totem · {totem.name} {totem.emoji}
+              {statusText ? ` · ${statusText}` : ""}
             </p>
           </div>
           {totemOpen && (
@@ -406,7 +624,7 @@ export default function App() {
             <div className="avatar" />
           )}
           <span>{user.name}</span>
-          <button className="ghost" type="button" onClick={logout}>
+          <button className="ghost" type="button" onClick={() => void logout()}>
             Quitter
           </button>
         </div>
@@ -446,10 +664,13 @@ export default function App() {
             {monthDays.map((day) => {
               const iso = todayIso(day);
               const inMonth = day.getMonth() === cursor.getMonth();
-              const dayMarks = visibleTasks.filter((task) => taskOccursOn(task, iso));
+              const dayMarks = visibleTasks.filter(
+                (task) => !task.master && taskOccursOn(task, iso),
+              );
               const shown = dayMarks.slice(0, 3);
               const extra = dayMarks.length - shown.length;
               const animal = animalForDate(iso);
+              const moodMark = moodEmoji(state.moodByDate[iso]?.mood);
               return (
                 <button
                   key={iso}
@@ -464,8 +685,9 @@ export default function App() {
                 >
                   <span className="day-top">
                     <span className="day-num">{day.getDate()}</span>
-                    <span className="day-animal" aria-hidden="true">
-                      {animal.emoji}
+                    <span className="day-top-marks" aria-hidden="true">
+                      {moodMark && <span className="day-mood">{moodMark}</span>}
+                      <span className="day-animal">{animal.emoji}</span>
                     </span>
                   </span>
                   <span className="day-icons">
@@ -529,7 +751,70 @@ export default function App() {
 
           {panel === "tasks" ? (
             <>
-              <h3 className="section-title">Liste du jour</h3>
+              <h3 className="section-title">Master TODO</h3>
+              <p className="hint master-hint">
+                Liste générale sans date, toujours en premier. Cocher valide pour le
+                jour sélectionné uniquement.
+              </p>
+              <form onSubmit={addMasterTask} className="master-form">
+                <div className="task-form">
+                  <input
+                    value={masterTitle}
+                    onChange={(event) => setMasterTitle(event.target.value)}
+                    placeholder="Une tâche récurrente du quotidien…"
+                    aria-label="Nouvelle Master TODO"
+                  />
+                  <button className="primary" type="submit">
+                    Ajouter
+                  </button>
+                </div>
+              </form>
+              <ul className="task-list master-list">
+                {masterTasks.length === 0 && (
+                  <li className="hint">Aucune Master TODO pour l’instant.</li>
+                )}
+                {masterTasks.map((task) => {
+                  const done = isTaskDoneOn(task, selectedDate);
+                  const tint = taskColor(task);
+                  return (
+                    <li
+                      key={task.id}
+                      className={`task-item master ${done ? "done" : ""}`}
+                      style={{ ["--task-color" as string]: tint }}
+                    >
+                      <button
+                        className="bullet"
+                        type="button"
+                        aria-label="Marquer comme fait pour ce jour"
+                        onClick={() => toggleTask(task.id)}
+                      />
+                      <span
+                        className={task.icon ? "task-icon" : "task-icon fallback"}
+                        aria-hidden="true"
+                        style={{
+                          backgroundColor: `${tint}22`,
+                          boxShadow: `inset 0 0 0 1.5px ${tint}`,
+                        }}
+                      >
+                        {agendaGlyph(task)}
+                      </span>
+                      <div className="task-body">
+                        <span>{task.title}</span>
+                        <small className="task-meta">
+                          {done ? "Fait ce jour" : "À faire ce jour"}
+                        </small>
+                      </div>
+                      <button className="tiny" type="button" onClick={() => removeTask(task.id)}>
+                        retirer
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+
+              <h3 className="section-title" style={{ marginTop: 22 }}>
+                Liste du jour
+              </h3>
               <form onSubmit={addTask}>
                 <div className="task-form">
                   <input
@@ -772,14 +1057,41 @@ export default function App() {
                   </div>
                 </>
               )}
+
+              <h3 className="section-title" style={{ marginTop: 22 }}>
+                Humeur du jour
+              </h3>
+              <p className="hint">
+                {dayMood
+                  ? `Tu te sens ${MOODS.find((m) => m.id === dayMood)?.label.toLowerCase()} aujourd’hui.`
+                  : "Comment te sens-tu ce jour-là ?"}
+              </p>
+              <div className="mood-picker" role="group" aria-label="Humeur du jour">
+                {MOODS.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    className={dayMood === entry.id ? "mood-chip active" : "mood-chip"}
+                    aria-label={entry.label}
+                    aria-pressed={dayMood === entry.id}
+                    title={entry.label}
+                    onClick={() => setMood(entry.id)}
+                  >
+                    <span className="mood-emoji" aria-hidden="true">
+                      {entry.emoji}
+                    </span>
+                    <span className="mood-label">{entry.label}</span>
+                  </button>
+                ))}
+              </div>
             </>
           ) : (
             <>
               <h3 className="section-title">Tes cercles cosy</h3>
               <p className="hint">
-                Un ou plusieurs administrateurs gèrent le groupe. Sur GitLab
-                Pages, les données restent dans ce navigateur (base locale pour
-                tester l’interface).
+                {isCloudUser
+                  ? "Tes groupes sont synchronisés avec ton compte Google. Le partage live entre comptes différents arrivera plus tard."
+                  : "Un ou plusieurs administrateurs gèrent le groupe. En mode démo, les données restent dans ce navigateur."}
               </p>
               {groupMessage && <p className="hint">{groupMessage}</p>}
               <form className="task-form" onSubmit={createGroup}>
