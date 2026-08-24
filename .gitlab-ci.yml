@@ -1,43 +1,24 @@
-stages:
-  - build
-  - deploy
+image: node:22-bookworm
 
-default:
-  image: node:22
-
-build:
-  stage: build
-  cache:
-    key:
-      files:
-        - package-lock.json
-    paths:
-      - node_modules/
-  script:
-    - npm ci
-    - npm run build
+workflow:
   rules:
+    - if: $CI_COMMIT_BRANCH
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
 
 pages:
   stage: deploy
-  cache:
-    key:
-      files:
-        - package-lock.json
-    paths:
-      - node_modules/
   script:
-    - npm ci
-    - npm run build
-    - mv dist public
+    - node -v
+    - npm -v
+    - npm install --no-audit --no-fund
+    - npx vite build --outDir public
+    - test -f public/index.html
     - cp public/index.html public/404.html
-  pages:
-    publish: public
+    - ls -la public
   artifacts:
     paths:
       - public
     expire_in: 1 week
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == "main"
