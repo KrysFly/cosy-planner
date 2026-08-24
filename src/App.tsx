@@ -122,6 +122,7 @@ export default function App() {
   const [customIcon, setCustomIcon] = useState("");
   const [color, setColor] = useState<string>(DEFAULT_BULLET_COLORS.task);
   const [panel, setPanel] = useState<"tasks" | "master" | "groups">("tasks");
+  const [addFormOpen, setAddFormOpen] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [groupMessage, setGroupMessage] = useState("");
@@ -356,6 +357,7 @@ export default function App() {
     enabled: state.waterEnabled,
   };
   const dayMood = state.moodByDate[selectedDate]?.mood ?? null;
+  const dayMoodComment = state.moodByDate[selectedDate]?.comment ?? "";
 
   const chosenIcon = customIcon.trim() || icon;
   const chosenMasterIcon = masterCustomIcon.trim() || masterIcon;
@@ -409,6 +411,7 @@ export default function App() {
     update({ tasks: [...state.tasks, task] });
     setTitle("");
     setCustomIcon("");
+    setAddFormOpen(false);
   }
 
   function addMasterTask(event: FormEvent) {
@@ -445,6 +448,19 @@ export default function App() {
 
   function removeTask(id: string) {
     update({ tasks: state.tasks.filter((task) => task.id !== id) });
+  }
+
+  /** Swap with the adjacent peer in the visible list (masters among masters, day tasks among day tasks). */
+  function moveTask(id: string, direction: -1 | 1, peerIds: string[]) {
+    const peerIndex = peerIds.indexOf(id);
+    const swapId = peerIds[peerIndex + direction];
+    if (!swapId) return;
+    const tasks = [...state.tasks];
+    const from = tasks.findIndex((task) => task.id === id);
+    const to = tasks.findIndex((task) => task.id === swapId);
+    if (from < 0 || to < 0) return;
+    [tasks[from], tasks[to]] = [tasks[to], tasks[from]];
+    update({ tasks });
   }
 
   function createGroup(event: FormEvent) {
@@ -531,8 +547,19 @@ export default function App() {
     if (dayMood === mood) {
       delete next[selectedDate];
     } else {
-      next[selectedDate] = { mood };
+      const comment = next[selectedDate]?.comment?.trim();
+      next[selectedDate] = comment ? { mood, comment } : { mood };
     }
+    update({ moodByDate: next });
+  }
+
+  function setMoodComment(comment: string) {
+    if (!dayMood) return;
+    const next = { ...state.moodByDate };
+    const trimmed = comment.slice(0, 500);
+    next[selectedDate] = trimmed.trim()
+      ? { mood: dayMood, comment: trimmed }
+      : { mood: dayMood };
     update({ moodByDate: next });
   }
 
@@ -851,9 +878,10 @@ export default function App() {
                 {masterTasks.length === 0 && (
                   <li className="hint">Aucune Master TODO pour l’instant.</li>
                 )}
-                {masterTasks.map((task) => {
+                {masterTasks.map((task, index) => {
                   const done = isTaskDoneOn(task, selectedDate);
                   const tint = taskColor(task);
+                  const peerIds = masterTasks.map((t) => t.id);
                   return (
                     <li
                       key={task.id}
@@ -883,9 +911,29 @@ export default function App() {
                           {done ? "Fait ce jour" : "À faire ce jour"}
                         </small>
                       </div>
-                      <button className="tiny" type="button" onClick={() => removeTask(task.id)}>
-                        retirer
-                      </button>
+                      <div className="task-actions">
+                        <button
+                          className="tiny reorder"
+                          type="button"
+                          aria-label="Monter"
+                          disabled={index === 0}
+                          onClick={() => moveTask(task.id, -1, peerIds)}
+                        >
+                          ▲
+                        </button>
+                        <button
+                          className="tiny reorder"
+                          type="button"
+                          aria-label="Descendre"
+                          disabled={index === masterTasks.length - 1}
+                          onClick={() => moveTask(task.id, 1, peerIds)}
+                        >
+                          ▼
+                        </button>
+                        <button className="tiny" type="button" onClick={() => removeTask(task.id)}>
+                          retirer
+                        </button>
+                      </div>
                     </li>
                   );
                 })}
@@ -894,163 +942,177 @@ export default function App() {
           ) : panel === "tasks" ? (
             <>
               <h3 className="section-title">Liste du jour</h3>
-              <form onSubmit={addTask}>
-                <div className="task-form">
-                  <input
-                    value={title}
-                    onChange={(event) => setTitle(event.target.value)}
-                    placeholder="Une petite tâche…"
-                    aria-label="Nouvelle tâche"
-                  />
+              <button
+                type="button"
+                className={addFormOpen ? "add-toggle open" : "add-toggle"}
+                aria-expanded={addFormOpen}
+                aria-controls="add-task-form"
+                onClick={() => setAddFormOpen((open) => !open)}
+              >
+                <span aria-hidden="true">{addFormOpen ? "▾" : "▸"}</span>
+                Ajout d&apos;une tâche/évènement/note
+              </button>
+              {addFormOpen && (
+                <form id="add-task-form" onSubmit={addTask} className="add-task-form">
+                  <div className="task-form">
+                    <input
+                      value={title}
+                      onChange={(event) => setTitle(event.target.value)}
+                      placeholder="Une petite tâche…"
+                      aria-label="Nouvelle tâche"
+                      autoFocus
+                    />
+                    <select
+                      value={bullet}
+                      onChange={(event) => {
+                        const next = event.target.value as BulletKind;
+                        setBullet(next);
+                        if (
+                          (TASK_COLORS as readonly string[]).includes(color) ||
+                          color === DEFAULT_BULLET_COLORS[bullet]
+                        ) {
+                          setColor(DEFAULT_BULLET_COLORS[next]);
+                        }
+                      }}
+                      aria-label="Type de puce"
+                    >
+                      <option value="task">Tâche</option>
+                      <option value="event">Événement</option>
+                      <option value="note">Note</option>
+                    </select>
+                  </div>
+
+                  <label className="field-label" htmlFor="recurrence">
+                    Fréquence
+                  </label>
                   <select
-                    value={bullet}
-                    onChange={(event) => {
-                      const next = event.target.value as BulletKind;
-                      setBullet(next);
-                      if (
-                        (TASK_COLORS as readonly string[]).includes(color) ||
-                        color === DEFAULT_BULLET_COLORS[bullet]
-                      ) {
-                        setColor(DEFAULT_BULLET_COLORS[next]);
-                      }
-                    }}
-                    aria-label="Type de puce"
+                    id="recurrence"
+                    className="field"
+                    value={recurrence}
+                    onChange={(event) => setRecurrence(event.target.value as Recurrence)}
+                    aria-label="Fréquence"
                   >
-                    <option value="task">Tâche</option>
-                    <option value="event">Événement</option>
-                    <option value="note">Note</option>
+                    {(Object.keys(RECURRENCE_LABELS) as Recurrence[]).map((key) => (
+                      <option key={key} value={key}>
+                        {RECURRENCE_LABELS[key]}
+                      </option>
+                    ))}
                   </select>
-                </div>
 
-                <label className="field-label" htmlFor="recurrence">
-                  Fréquence
-                </label>
-                <select
-                  id="recurrence"
-                  className="field"
-                  value={recurrence}
-                  onChange={(event) => setRecurrence(event.target.value as Recurrence)}
-                  aria-label="Fréquence"
-                >
-                  {(Object.keys(RECURRENCE_LABELS) as Recurrence[]).map((key) => (
-                    <option key={key} value={key}>
-                      {RECURRENCE_LABELS[key]}
-                    </option>
-                  ))}
-                </select>
+                  <div className="date-row">
+                    <label className="date-field">
+                      <span className="field-label">Début (optionnel)</span>
+                      <input
+                        className="field"
+                        type="date"
+                        value={startDate}
+                        onChange={(event) => setStartDate(event.target.value)}
+                        aria-label="Date de début"
+                      />
+                    </label>
+                    <label className="date-field">
+                      <span className="field-label">Fin (optionnel)</span>
+                      <input
+                        className="field"
+                        type="date"
+                        value={endDate}
+                        min={startDate || selectedDate}
+                        onChange={(event) => setEndDate(event.target.value)}
+                        aria-label="Date de fin"
+                      />
+                    </label>
+                  </div>
 
-                <div className="date-row">
-                  <label className="date-field">
-                    <span className="field-label">Début (optionnel)</span>
-                    <input
-                      className="field"
-                      type="date"
-                      value={startDate}
-                      onChange={(event) => setStartDate(event.target.value)}
-                      aria-label="Date de début"
-                    />
-                  </label>
-                  <label className="date-field">
-                    <span className="field-label">Fin (optionnel)</span>
-                    <input
-                      className="field"
-                      type="date"
-                      value={endDate}
-                      min={startDate || selectedDate}
-                      onChange={(event) => setEndDate(event.target.value)}
-                      aria-label="Date de fin"
-                    />
-                  </label>
-                </div>
-
-                <span className="field-label">Icône</span>
-                <div className="icon-picker" role="listbox" aria-label="Choisir une icône">
-                  <button
-                    type="button"
-                    className={!chosenIcon ? "icon-chip active" : "icon-chip"}
-                    aria-label="Sans icône"
-                    onClick={() => {
-                      setIcon("");
-                      setCustomIcon("");
-                    }}
-                  >
-                    ·
-                  </button>
-                  {CUTE_ICONS.map((emoji) => (
+                  <span className="field-label">Icône</span>
+                  <div className="icon-picker" role="listbox" aria-label="Choisir une icône">
                     <button
-                      key={emoji}
                       type="button"
-                      className={
-                        chosenIcon === emoji && !customIcon.trim()
-                          ? "icon-chip active"
-                          : "icon-chip"
-                      }
-                      aria-label={`Icône ${emoji}`}
+                      className={!chosenIcon ? "icon-chip active" : "icon-chip"}
+                      aria-label="Sans icône"
                       onClick={() => {
-                        setIcon(emoji);
+                        setIcon("");
                         setCustomIcon("");
                       }}
                     >
-                      {emoji}
+                      ·
                     </button>
-                  ))}
-                </div>
-                <input
-                  className="field"
-                  value={customIcon}
-                  onChange={(event) => setCustomIcon(event.target.value)}
-                  placeholder="Ou une autre icône / emoji…"
-                  aria-label="Icône personnalisée"
-                  maxLength={8}
-                />
+                    {CUTE_ICONS.map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        className={
+                          chosenIcon === emoji && !customIcon.trim()
+                            ? "icon-chip active"
+                            : "icon-chip"
+                        }
+                        aria-label={`Icône ${emoji}`}
+                        onClick={() => {
+                          setIcon(emoji);
+                          setCustomIcon("");
+                        }}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    className="field"
+                    value={customIcon}
+                    onChange={(event) => setCustomIcon(event.target.value)}
+                    placeholder="Ou une autre icône / emoji…"
+                    aria-label="Icône personnalisée"
+                    maxLength={8}
+                  />
 
-                <span className="field-label">Couleur</span>
-                <div className="color-picker" role="listbox" aria-label="Choisir une couleur">
-                  {TASK_COLORS.map((swatch) => (
-                    <button
-                      key={swatch}
-                      type="button"
-                      className={color === swatch ? "color-chip active" : "color-chip"}
-                      style={{ backgroundColor: swatch }}
-                      aria-label={`Couleur ${swatch}`}
-                      onClick={() => setColor(swatch)}
-                    />
-                  ))}
-                  <label className="color-custom" title="Couleur libre">
-                    <input
-                      type="color"
-                      value={color}
-                      onChange={(event) => setColor(event.target.value)}
-                      aria-label="Couleur personnalisée"
-                    />
-                  </label>
-                </div>
+                  <span className="field-label">Couleur</span>
+                  <div className="color-picker" role="listbox" aria-label="Choisir une couleur">
+                    {TASK_COLORS.map((swatch) => (
+                      <button
+                        key={swatch}
+                        type="button"
+                        className={color === swatch ? "color-chip active" : "color-chip"}
+                        style={{ backgroundColor: swatch }}
+                        aria-label={`Couleur ${swatch}`}
+                        onClick={() => setColor(swatch)}
+                      />
+                    ))}
+                    <label className="color-custom" title="Couleur libre">
+                      <input
+                        type="color"
+                        value={color}
+                        onChange={(event) => setColor(event.target.value)}
+                        aria-label="Couleur personnalisée"
+                      />
+                    </label>
+                  </div>
 
-                <select
-                  className="field"
-                  value={groupId}
-                  onChange={(event) => setGroupId(event.target.value)}
-                  aria-label="Partager avec un groupe"
-                >
-                  <option value="">Personnel</option>
-                  {myGroups.map((group) => (
-                    <option key={group.id} value={group.id}>
-                      Groupe · {group.name}
-                    </option>
-                  ))}
-                </select>
-                <div style={{ height: 10 }} />
-                <button className="primary" type="submit">
-                  Ajouter
-                </button>
-              </form>
+                  <select
+                    className="field"
+                    value={groupId}
+                    onChange={(event) => setGroupId(event.target.value)}
+                    aria-label="Partager avec un groupe"
+                  >
+                    <option value="">Personnel</option>
+                    {myGroups.map((group) => (
+                      <option key={group.id} value={group.id}>
+                        Groupe · {group.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div style={{ height: 10 }} />
+                  <button className="primary" type="submit">
+                    Ajouter
+                  </button>
+                </form>
+              )}
               <ul className="task-list" style={{ marginTop: 12 }}>
                 {dayTasks.length === 0 && (
                   <li className="hint">Rien pour aujourd’hui. Pose une première puce ✨</li>
                 )}
-                {dayTasks.map((task) => {
+                {dayTasks.map((task, index) => {
                   const done = isTaskDoneOn(task, selectedDate);
                   const tint = taskColor(task);
+                  const peerIds = dayTasks.map((t) => t.id);
                   return (
                     <li
                       key={task.id}
@@ -1091,9 +1153,29 @@ export default function App() {
                           )
                         )}
                       </div>
-                      <button className="tiny" type="button" onClick={() => removeTask(task.id)}>
-                        retirer
-                      </button>
+                      <div className="task-actions">
+                        <button
+                          className="tiny reorder"
+                          type="button"
+                          aria-label="Monter"
+                          disabled={index === 0}
+                          onClick={() => moveTask(task.id, -1, peerIds)}
+                        >
+                          ▲
+                        </button>
+                        <button
+                          className="tiny reorder"
+                          type="button"
+                          aria-label="Descendre"
+                          disabled={index === dayTasks.length - 1}
+                          onClick={() => moveTask(task.id, 1, peerIds)}
+                        >
+                          ▼
+                        </button>
+                        <button className="tiny" type="button" onClick={() => removeTask(task.id)}>
+                          retirer
+                        </button>
+                      </div>
                     </li>
                   );
                 })}
@@ -1164,6 +1246,24 @@ export default function App() {
                   </button>
                 ))}
               </div>
+              <label className="mood-comment-label" htmlFor="mood-comment">
+                Commentaire
+              </label>
+              <textarea
+                id="mood-comment"
+                className="mood-comment"
+                value={dayMoodComment}
+                onChange={(event) => setMoodComment(event.target.value)}
+                placeholder={
+                  dayMood
+                    ? "Une petite note sur ton humeur…"
+                    : "Choisis d’abord une humeur pour laisser un commentaire."
+                }
+                disabled={!dayMood}
+                rows={3}
+                maxLength={500}
+                aria-label="Commentaire sur l’humeur du jour"
+              />
             </>
           ) : (
             <>

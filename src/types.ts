@@ -52,6 +52,8 @@ export type MoodId = "great" | "good" | "ok" | "low" | "bad";
 
 export type MoodDay = {
   mood: MoodId;
+  /** Optional note about the day's mood. */
+  comment?: string;
 };
 
 export const MOODS: ReadonlyArray<{ id: MoodId; emoji: string; label: string }> = [
@@ -85,7 +87,11 @@ export function normalizeMoodByDate(
   for (const [iso, entry] of Object.entries(raw as Record<string, unknown>)) {
     if (!entry || typeof entry !== "object") continue;
     const mood = (entry as { mood?: unknown }).mood;
-    if (isMoodId(mood)) out[iso] = { mood };
+    if (!isMoodId(mood)) continue;
+    const commentRaw = (entry as { comment?: unknown }).comment;
+    const comment =
+      typeof commentRaw === "string" ? commentRaw.trim().slice(0, 500) : "";
+    out[iso] = comment ? { mood, comment } : { mood };
   }
   return out;
 }
