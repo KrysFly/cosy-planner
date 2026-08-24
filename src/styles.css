@@ -677,6 +677,12 @@ button {
   font-size: 0.9rem;
 }
 
+.sync-error {
+  color: #b42318;
+  margin-top: 6px;
+  max-width: 36rem;
+}
+
 .group-list {
   display: grid;
   gap: 10px;
