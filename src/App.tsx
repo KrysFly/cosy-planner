@@ -612,7 +612,9 @@ export default function App() {
       try {
         await deleteSharedGroup(group);
       } catch (error) {
-        setGroupMessage(formatCloudError(error));
+        setGroupMessage(
+          `${formatCloudError(error)} Si tu viens de mettre à jour les règles, republie firestore.rules puis réessaie.`,
+        );
         setGroupBusy(false);
         return;
       }
@@ -621,7 +623,11 @@ export default function App() {
 
     setState((current) => ({
       ...current,
-      groups: current.groups.filter((item) => item.id !== group.id),
+      groups: current.groups.filter(
+        (item) =>
+          item.id !== group.id &&
+          item.inviteCode.toUpperCase() !== group.inviteCode.toUpperCase(),
+      ),
       tasks: current.tasks.map((task) =>
         task.groupId === group.id ? { ...task, groupId: null } : task,
       ),

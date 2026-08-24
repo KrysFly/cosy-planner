@@ -49,10 +49,13 @@ service cloud.firestore {
         && request.resource.data.groupId is string
         && request.resource.data.groupId.size() > 0;
       allow update: if false;
+      // After the group doc is removed, admins (or anyone signed-in for orphans) can drop the invite.
       allow delete: if signedIn()
         && resource.data.groupId is string
-        && exists(/databases/$(database)/documents/groups/$(resource.data.groupId))
-        && request.auth.uid in get(/databases/$(database)/documents/groups/$(resource.data.groupId)).data.adminIds;
+        && (
+          !exists(/databases/$(database)/documents/groups/$(resource.data.groupId))
+          || request.auth.uid in get(/databases/$(database)/documents/groups/$(resource.data.groupId)).data.adminIds
+        );
     }
 
     match /groups/{groupId} {

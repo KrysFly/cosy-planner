@@ -7,6 +7,7 @@ import {
 } from "firebase/auth";
 import {
   arrayUnion,
+  deleteDoc,
   doc,
   getDoc,
   serverTimestamp,
@@ -305,15 +306,41 @@ export async function joinSharedGroupByCode(
   return { ok: true, group, alreadyMember: false };
 }
 
-/** Deletes shared group + invite index. Caller must be a group admin (enforced by rules). */
+/**
+ * Deletes shared group + invite index when they exist in Firestore.
+ * Skips missing docs (avoids permission-denied on null `resource` in rules).
+ * Resolves the real group id via the invite code when local id is stale.
+ */
 export async function deleteSharedGroup(group: Group): Promise<void> {
   const db = requireDb();
-  const batch = writeBatch(db);
-  batch.delete(doc(db, "groups", group.id));
-  if (group.inviteCode) {
-    batch.delete(doc(db, "invites", group.inviteCode.toUpperCase()));
+  const code = group.inviteCode?.trim().toUpperCase() ?? "";
+
+  let targetId = group.id;
+  if (code) {
+    const inviteSnap = await getDoc(doc(db, "invites", code));
+    if (inviteSnap.exists()) {
+      const linkedId = String((inviteSnap.data() as { groupId?: unknown }).groupId ?? "");
+      if (linkedId) targetId = linkedId;
+    }
   }
-  await batch.commit();
+
+  const groupRef = doc(db, "groups", targetId);
+  const groupSnap = await getDoc(groupRef);
+  if (groupSnap.exists()) {
+    await deleteDoc(groupRef);
+  }
+
+  if (code) {
+    const inviteRef = doc(db, "invites", code);
+    const inviteSnap = await getDoc(inviteRef);
+    if (inviteSnap.exists()) {
+      try {
+        await deleteDoc(inviteRef);
+      } catch {
+        // Orphan invite is non-blocking; group is already gone / local cleanup follows.
+      }
+    }
+  }
 }
 
 /** Shareable invite URL for the current deployment (respects Vite base). */
