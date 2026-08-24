@@ -8,10 +8,14 @@ import {
   type AnimalId,
 } from "./animals";
 import {
+  buildInviteLink,
   createDebouncedSaver,
+  createSharedGroup,
   formatCloudError,
+  joinSharedGroupByCode,
   loadUserPlanner,
   plannerDataFromState,
+  readJoinCodeFromUrl,
   saveUserPlanner,
   signInWithGoogleIdToken,
   signOutCloud,
@@ -127,6 +131,8 @@ export default function App() {
   const [groupName, setGroupName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [groupMessage, setGroupMessage] = useState("");
+  const [groupBusy, setGroupBusy] = useState(false);
+  const [copiedLinkFor, setCopiedLinkFor] = useState<string | null>(null);
   const [googleReady, setGoogleReady] = useState(false);
   const [totemOpen, setTotemOpen] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
@@ -135,6 +141,8 @@ export default function App() {
   const totemRef = useRef<HTMLDivElement>(null);
   const skipNextCloudSave = useRef(false);
   const hydratedCloudUid = useRef<string | null>(null);
+  const pendingJoinRef = useRef<string | null>(null);
+  const joinAttemptKeyRef = useRef<string | null>(null);
   const cloudSaver = useRef(
     createDebouncedSaver(500, (ok, error) => {
       if (ok) {
@@ -149,6 +157,15 @@ export default function App() {
 
   const user = state.user;
   const isCloudUser = Boolean(user && user.provider === "google" && FIREBASE_READY);
+
+  useEffect(() => {
+    const code = readJoinCodeFromUrl({ clear: true });
+    if (!code) return;
+    pendingJoinRef.current = code;
+    setJoinCode(code);
+    setPanel("groups");
+    setGroupMessage("Code d’invitation détecté. Connecte-toi pour rejoindre le groupe.");
+  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -465,44 +482,135 @@ export default function App() {
     update({ tasks });
   }
 
-  function createGroup(event: FormEvent) {
+  function mergeJoinedGroup(group: Group) {
+    setState((current) => {
+      const exists = current.groups.some((item) => item.id === group.id);
+      return {
+        ...current,
+        groups: exists
+          ? current.groups.map((item) => (item.id === group.id ? group : item))
+          : [...current.groups, group],
+      };
+    });
+  }
+
+  async function performJoin(codeRaw: string): Promise<void> {
+    if (!user) return;
+    const code = codeRaw.trim().toUpperCase();
+    if (!code) return;
+
+    const local = state.groups.find((group) => group.inviteCode === code);
+    if (local?.memberIds.includes(user.id)) {
+      setGroupMessage(`Tu es déjà dans « ${local.name} ».`);
+      setJoinCode("");
+      return;
+    }
+
+    if (isCloudUser) {
+      setGroupBusy(true);
+      try {
+        const result = await joinSharedGroupByCode(user.id, code);
+        if (!result.ok) {
+          setGroupMessage(
+            result.reason === "not_found"
+              ? "Code inconnu. Vérifie le lien ou demande un nouveau code."
+              : "Impossible de rejoindre ce groupe pour le moment.",
+          );
+          return;
+        }
+        mergeJoinedGroup(result.group);
+        setGroupMessage(
+          result.alreadyMember
+            ? `Tu es déjà dans « ${result.group.name} ».`
+            : `Bienvenue dans « ${result.group.name} » !`,
+        );
+        setJoinCode("");
+      } catch (error) {
+        setGroupMessage(formatCloudError(error));
+      } finally {
+        setGroupBusy(false);
+      }
+      return;
+    }
+
+    if (!local) {
+      setGroupMessage(
+        "Code inconnu sur cet appareil. En mode démo, le code ne marche que sur le même navigateur — connecte-toi avec Google pour rejoindre via un lien.",
+      );
+      return;
+    }
+
+    mergeJoinedGroup({ ...local, memberIds: [...local.memberIds, user.id] });
+    setGroupMessage(`Bienvenue dans « ${local.name} » !`);
+    setJoinCode("");
+  }
+
+  async function createGroup(event: FormEvent) {
     event.preventDefault();
-    if (!user || !groupName.trim()) return;
+    if (!user || !groupName.trim() || groupBusy) return;
+    const name = groupName.trim();
+
+    if (isCloudUser) {
+      setGroupBusy(true);
+      try {
+        const group = await createSharedGroup(user.id, name);
+        setState((current) => ({ ...current, groups: [...current.groups, group] }));
+        setGroupName("");
+        setGroupMessage(
+          `Groupe « ${group.name} » créé. Partage le lien ou le code ${group.inviteCode}.`,
+        );
+      } catch (error) {
+        setGroupMessage(formatCloudError(error));
+      } finally {
+        setGroupBusy(false);
+      }
+      return;
+    }
+
     const group: Group = {
       id: uid("group"),
-      name: groupName.trim(),
+      name,
       inviteCode: inviteCode(),
       adminIds: [user.id],
       memberIds: [user.id],
     };
     update({ groups: [...state.groups, group] });
     setGroupName("");
+    setGroupMessage(`Groupe « ${group.name} » créé. Partage le lien ou le code ${group.inviteCode}.`);
   }
 
   function joinGroup(event: FormEvent) {
     event.preventDefault();
-    if (!user || !joinCode.trim()) return;
-    const code = joinCode.trim().toUpperCase();
-    const match = state.groups.find((group) => group.inviteCode === code);
-    if (!match) {
-      setGroupMessage("Code inconnu sur cet appareil. Le partage live arrivera avec un backend.");
-      return;
-    }
-    if (match.memberIds.includes(user.id)) {
-      setGroupMessage(`Tu es déjà dans « ${match.name} ».`);
-      setJoinCode("");
-      return;
-    }
-    update({
-      groups: state.groups.map((group) =>
-        group.id === match.id
-          ? { ...group, memberIds: [...group.memberIds, user.id] }
-          : group,
-      ),
-    });
-    setGroupMessage(`Bienvenue dans « ${match.name} » !`);
-    setJoinCode("");
+    if (!user || !joinCode.trim() || groupBusy) return;
+    void performJoin(joinCode);
   }
+
+  async function copyInviteLink(group: Group) {
+    const link = buildInviteLink(group.inviteCode);
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopiedLinkFor(group.id);
+      setGroupMessage(`Lien copié pour « ${group.name} ».`);
+      window.setTimeout(() => {
+        setCopiedLinkFor((current) => (current === group.id ? null : current));
+      }, 2000);
+    } catch {
+      setGroupMessage(`Copie ce lien : ${link}`);
+    }
+  }
+
+  useEffect(() => {
+    const code = pendingJoinRef.current;
+    if (!user || !code || groupBusy) return;
+    if (isCloudUser && hydratedCloudUid.current !== user.id) return;
+    const attemptKey = `${user.id}:${code}`;
+    if (joinAttemptKeyRef.current === attemptKey) return;
+    joinAttemptKeyRef.current = attemptKey;
+    pendingJoinRef.current = null;
+    setPanel("groups");
+    setJoinCode(code);
+    void performJoin(code);
+  }, [user, isCloudUser, syncStatus, groupBusy, state.groups]);
 
   function toggleAdmin(group: Group, memberId: string) {
     if (!user || !group.adminIds.includes(user.id)) return;
@@ -1293,8 +1401,8 @@ export default function App() {
               <h3 className="section-title">Tes cercles cosy</h3>
               <p className="hint">
                 {isCloudUser
-                  ? "Tes groupes sont synchronisés avec ton compte Google. Le partage live entre comptes différents arrivera plus tard."
-                  : "Un ou plusieurs administrateurs gèrent le groupe. En mode démo, les données restent dans ce navigateur."}
+                  ? "Crée un groupe, copie le lien d’invitation et envoie-le. Tes ami·es rejoignent avec Google et le code du lien."
+                  : "Un ou plusieurs administrateurs gèrent le groupe. En mode démo, les codes ne marchent que sur cet appareil — Google active les liens entre comptes."}
               </p>
               {groupMessage && <p className="hint">{groupMessage}</p>}
               <form className="task-form" onSubmit={createGroup}>
@@ -1302,8 +1410,9 @@ export default function App() {
                   value={groupName}
                   onChange={(event) => setGroupName(event.target.value)}
                   placeholder="Nom du groupe"
+                  disabled={groupBusy}
                 />
-                <button className="primary" type="submit">
+                <button className="primary" type="submit" disabled={groupBusy}>
                   Créer
                 </button>
               </form>
@@ -1312,8 +1421,9 @@ export default function App() {
                   value={joinCode}
                   onChange={(event) => setJoinCode(event.target.value)}
                   placeholder="Code d’invitation"
+                  disabled={groupBusy}
                 />
-                <button className="primary" type="submit">
+                <button className="primary" type="submit" disabled={groupBusy}>
                   Rejoindre
                 </button>
               </form>
@@ -1327,6 +1437,15 @@ export default function App() {
                     <article key={group.id} className="group-card">
                       <strong>{group.name}</strong>
                       <div className="hint">Code : {group.inviteCode}</div>
+                      <div className="group-invite-actions">
+                        <button
+                          className="tiny"
+                          type="button"
+                          onClick={() => void copyInviteLink(group)}
+                        >
+                          {copiedLinkFor === group.id ? "Lien copié" : "Copier le lien"}
+                        </button>
+                      </div>
                       {isAdmin && <span className="badge">admin</span>}
                       <ul className="hint">
                         {group.memberIds.map((memberId) => (

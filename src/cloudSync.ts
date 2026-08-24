@@ -5,12 +5,23 @@ import {
   signOut,
   type User as FirebaseUser,
 } from "firebase/auth";
-import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
+import {
+  arrayUnion,
+  doc,
+  getDoc,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  writeBatch,
+} from "firebase/firestore";
 import { getFirebaseAuth, getFirestoreDb, isFirebaseConfigured } from "./firebase";
 import {
   emptyState,
+  inviteCode as generateInviteCode,
   normalizeMoodByDate,
   normalizeTask,
+  uid,
+  type Group,
   type PlannerData,
   type PlannerState,
   type Task,
@@ -197,4 +208,140 @@ export function createDebouncedSaver(
       pending = null;
     },
   };
+}
+
+function requireDb() {
+  const db = getFirestoreDb();
+  if (!db) throw new Error("Firestore non configuré");
+  return db;
+}
+
+function normalizeGroup(raw: Partial<Group> & Pick<Group, "id">): Group {
+  return {
+    id: raw.id,
+    name: typeof raw.name === "string" ? raw.name : "Groupe",
+    inviteCode: typeof raw.inviteCode === "string" ? raw.inviteCode.toUpperCase() : "",
+    adminIds: Array.isArray(raw.adminIds) ? raw.adminIds.map(String) : [],
+    memberIds: Array.isArray(raw.memberIds) ? raw.memberIds.map(String) : [],
+  };
+}
+
+export async function loadSharedGroup(groupId: string): Promise<Group | null> {
+  if (!isFirebaseConfigured()) return null;
+  const snap = await getDoc(doc(requireDb(), "groups", groupId));
+  if (!snap.exists()) return null;
+  return normalizeGroup({ id: snap.id, ...(snap.data() as Partial<Group>) });
+}
+
+/**
+ * Creates a shared group + invite index. Retries a few times on invite code collision.
+ */
+export async function createSharedGroup(
+  ownerId: string,
+  name: string,
+): Promise<Group> {
+  const db = requireDb();
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Nom de groupe requis");
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const group: Group = {
+      id: uid("group"),
+      name: trimmed,
+      inviteCode: generateInviteCode(),
+      adminIds: [ownerId],
+      memberIds: [ownerId],
+    };
+    const inviteRef = doc(db, "invites", group.inviteCode);
+    const existing = await getDoc(inviteRef);
+    if (existing.exists()) continue;
+
+    const batch = writeBatch(db);
+    batch.set(doc(db, "groups", group.id), {
+      ...stripUndefined(group),
+      createdAt: serverTimestamp(),
+    });
+    batch.set(inviteRef, { groupId: group.id });
+    await batch.commit();
+    return group;
+  }
+
+  throw new Error("Impossible de générer un code d’invitation unique.");
+}
+
+export type JoinSharedResult =
+  | { ok: true; group: Group; alreadyMember: boolean }
+  | { ok: false; reason: "not_found" | "unavailable" };
+
+/**
+ * Resolves invite code → shared group, adds the user to memberIds if needed.
+ */
+export async function joinSharedGroupByCode(
+  userId: string,
+  code: string,
+): Promise<JoinSharedResult> {
+  if (!isFirebaseConfigured()) return { ok: false, reason: "unavailable" };
+  const normalized = code.trim().toUpperCase();
+  if (!normalized) return { ok: false, reason: "not_found" };
+
+  const db = requireDb();
+  const inviteSnap = await getDoc(doc(db, "invites", normalized));
+  if (!inviteSnap.exists()) return { ok: false, reason: "not_found" };
+
+  const groupId = String((inviteSnap.data() as { groupId?: unknown }).groupId ?? "");
+  if (!groupId) return { ok: false, reason: "not_found" };
+
+  const groupRef = doc(db, "groups", groupId);
+  const groupSnap = await getDoc(groupRef);
+  if (!groupSnap.exists()) return { ok: false, reason: "not_found" };
+
+  let group = normalizeGroup({ id: groupSnap.id, ...(groupSnap.data() as Partial<Group>) });
+  if (group.memberIds.includes(userId)) {
+    return { ok: true, group, alreadyMember: true };
+  }
+
+  await updateDoc(groupRef, { memberIds: arrayUnion(userId) });
+  group = { ...group, memberIds: [...group.memberIds, userId] };
+  return { ok: true, group, alreadyMember: false };
+}
+
+/** Shareable invite URL for the current deployment (respects Vite base). */
+export function buildInviteLink(code: string): string {
+  const normalized = code.trim().toUpperCase();
+  const base = import.meta.env.BASE_URL || "/";
+  const url = new URL(base, window.location.origin);
+  url.searchParams.set("join", normalized);
+  return url.toString();
+}
+
+/** Read pending invite code from `?join=` (or hash query) and optionally strip it from the URL. */
+export function readJoinCodeFromUrl(options?: { clear?: boolean }): string | null {
+  const fromSearch = new URLSearchParams(window.location.search).get("join");
+  let fromHash: string | null = null;
+  const hash = window.location.hash;
+  if (hash.includes("?")) {
+    fromHash = new URLSearchParams(hash.slice(hash.indexOf("?") + 1)).get("join");
+  } else if (hash.startsWith("#join=")) {
+    fromHash = decodeURIComponent(hash.slice("#join=".length));
+  }
+
+  const code = (fromSearch || fromHash || "").trim().toUpperCase();
+  if (!code) return null;
+
+  if (options?.clear !== false) {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("join");
+    if (url.hash.includes("?")) {
+      const [path, qs] = url.hash.split("?");
+      const params = new URLSearchParams(qs);
+      params.delete("join");
+      const next = params.toString();
+      url.hash = next ? `${path}?${next}` : path;
+    } else if (url.hash.startsWith("#join=")) {
+      url.hash = "";
+    }
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  }
+
+  return code;
 }

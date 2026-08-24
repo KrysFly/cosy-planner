@@ -9,11 +9,11 @@ Outil de planification en ligne, façon bullet journal : interface pastel, anima
 - Liste de tâches à droite : puces tâche / événement / note
 - Fréquence **une fois / quotidien / hebdomadaire / mensuel**, avec début et fin optionnels
 - Icônes mignonnes (ou emoji libre) et **couleur** au choix, visibles sur l’agenda
-- Groupes avec code d’invitation et plusieurs administrateurs
+- Groupes avec code d’invitation, **lien partageable** (`?join=CODE`) et plusieurs administrateurs
 - Compteur de verres d’eau, activable si on veut
 - Déploiement **GitHub Pages** (pipeline Actions) — GitLab Pages en secours si des minutes CI restent
 
-Avec un compte **Google** et Firebase configuré, tout le planner (tâches, groupes, eau, totem) est synchronisé dans **Cloud Firestore**. Le **mode démo** reste en `localStorage` sur l’appareil.
+Avec un compte **Google** et Firebase configuré, tout le planner (tâches, groupes, eau, totem) est synchronisé dans **Cloud Firestore**. Les groupes créés en cloud sont indexés pour qu’un·e autre utilisateur·rice puisse rejoindre via le **lien** ou le **code**. Le **mode démo** reste en `localStorage` sur l’appareil (les codes ne traversent pas les navigateurs).
 
 ## Lancer en local
 
@@ -58,7 +58,7 @@ La sync cloud (comptes Google) utilise Firebase Auth + Firestore.
 
 1. Ouvre [Firebase Console](https://console.firebase.google.com/) et crée (ou réutilise) un projet — idéalement le même GCP que l’OAuth Google.
 2. **Authentication → Sign-in method → Google** : activer. Domaines autorisés : `localhost`, `krysfly.github.io`.
-3. **Firestore Database** : créer une base (mode production), puis coller les règles de [`firestore.rules`](firestore.rules) (chaque user ne lit/écrit que `users/{uid}`).
+3. **Firestore Database** : créer une base (mode production), puis coller les règles de [`firestore.rules`](firestore.rules) (accès `users/{uid}` pour soi ; collections partagées `groups` + `invites` pour les invitations). **À chaque mise à jour des règles, republie-les** dans Firebase Console → Firestore → Règles.
 4. **Paramètres du projet → Vos applications → Web** : enregistrer l’app et copier la config.
 
 Localement, complète `.env` (voir `.env.example`) :
@@ -75,6 +75,15 @@ VITE_FIREBASE_APP_ID=…
 Sur **GitHub** : **Settings → Secrets and variables → Actions → Variables**, ajoute les mêmes `VITE_FIREBASE_*` (publiques dans le JS buildé). Relance le workflow Pages.
 
 Sans Firebase, la connexion Google peut s’afficher mais la sync cloud reste inactive ; le mode démo fonctionne toujours.
+
+## Invitations de groupe
+
+1. Connecte-toi avec **Google** (Firebase requis).
+2. Crée un groupe → un code à 6 caractères est généré.
+3. **Copier le lien** produit une URL du type `…/cosy-planner/?join=ABC123`.
+4. La personne invitée ouvre le lien, se connecte : le code est lu, le panneau Groupes s’ouvre, et l’adhésion est tentée automatiquement.
+
+Collections Firestore utilisées : `groups/{groupId}`, `invites/{CODE}` (en plus de `users/{uid}`). Après un changement de [`firestore.rules`](firestore.rules), republie les règles dans la console Firebase.
 
 ## GitHub Pages
 
