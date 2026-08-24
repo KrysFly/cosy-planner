@@ -1,15 +1,25 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { animalForDate, ANIMALS, KawaiiAnimal } from "./animals";
 import {
+  agendaGlyph,
+  CUTE_ICONS,
+  DEFAULT_BULLET_COLORS,
   inviteCode,
+  isTaskDoneOn,
   loadState,
   parseJwtPayload,
+  RECURRENCE_LABELS,
   saveState,
+  TASK_COLORS,
+  taskColor,
+  taskOccursOn,
   todayIso,
+  toggleTaskOnDate,
   uid,
   type BulletKind,
   type Group,
   type PlannerState,
+  type Recurrence,
   type Task,
   type User,
 } from "./types";
@@ -55,6 +65,12 @@ export default function App() {
   const [title, setTitle] = useState("");
   const [bullet, setBullet] = useState<BulletKind>("task");
   const [groupId, setGroupId] = useState<string>("");
+  const [recurrence, setRecurrence] = useState<Recurrence>("once");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [icon, setIcon] = useState("✨");
+  const [customIcon, setCustomIcon] = useState("");
+  const [color, setColor] = useState<string>(DEFAULT_BULLET_COLORS.task);
   const [panel, setPanel] = useState<"tasks" | "groups">("tasks");
   const [groupName, setGroupName] = useState("");
   const [joinCode, setJoinCode] = useState("");
@@ -108,19 +124,24 @@ export default function App() {
   const monthDays = useMemo(() => daysInGrid(cursor), [cursor]);
   const selectedAnimal = animalForDate(selectedDate);
   const myGroups = state.groups.filter((group) => user && group.memberIds.includes(user.id));
-  const dayTasks = state.tasks
-    .filter((task) => task.date === selectedDate)
-    .filter((task) => {
-      if (!user) return false;
+
+  const visibleTasks = useMemo(() => {
+    if (!user) return [] as Task[];
+    return state.tasks.filter((task) => {
       if (!task.groupId) return task.createdBy === user.id;
       return myGroups.some((group) => group.id === task.groupId);
     });
+  }, [myGroups, state.tasks, user]);
+
+  const dayTasks = visibleTasks.filter((task) => taskOccursOn(task, selectedDate));
 
   const water = state.waterByDate[selectedDate] ?? {
     goal: state.waterDefaultGoal,
     drunk: 0,
     enabled: state.waterEnabled,
   };
+
+  const chosenIcon = customIcon.trim() || icon;
 
   function update(partial: Partial<PlannerState>) {
     setState((current) => ({ ...current, ...partial }));
@@ -133,6 +154,7 @@ export default function App() {
   function addTask(event: FormEvent) {
     event.preventDefault();
     if (!user || !title.trim()) return;
+    if (startDate && endDate && startDate > endDate) return;
     const task: Task = {
       id: uid("task"),
       title: title.trim(),
@@ -141,15 +163,22 @@ export default function App() {
       bullet,
       groupId: groupId || null,
       createdBy: user.id,
+      recurrence,
+      startDate: startDate || null,
+      endDate: endDate || null,
+      icon: chosenIcon,
+      color,
+      doneDates: [],
     };
     update({ tasks: [...state.tasks, task] });
     setTitle("");
+    setCustomIcon("");
   }
 
   function toggleTask(id: string) {
     update({
       tasks: state.tasks.map((task) =>
-        task.id === id ? { ...task, done: !task.done } : task,
+        task.id === id ? toggleTaskOnDate(task, selectedDate) : task,
       ),
     });
   }
@@ -334,7 +363,9 @@ export default function App() {
             {monthDays.map((day) => {
               const iso = todayIso(day);
               const inMonth = day.getMonth() === cursor.getMonth();
-              const counts = state.tasks.filter((task) => task.date === iso);
+              const dayMarks = visibleTasks.filter((task) => taskOccursOn(task, iso));
+              const shown = dayMarks.slice(0, 3);
+              const extra = dayMarks.length - shown.length;
               const animal = animalForDate(iso);
               return (
                 <button
@@ -348,18 +379,31 @@ export default function App() {
                   type="button"
                   onClick={() => setSelectedDate(iso)}
                 >
-                  <span className="day-num">{day.getDate()}</span>
-                  <span aria-hidden="true">{animal.emoji}</span>
-                  <span className="day-dots">
-                    {counts.some((task) => task.bullet === "task") && (
-                      <i className="dot task" />
-                    )}
-                    {counts.some((task) => task.bullet === "event") && (
-                      <i className="dot event" />
-                    )}
-                    {counts.some((task) => task.bullet === "note") && (
-                      <i className="dot note" />
-                    )}
+                  <span className="day-top">
+                    <span className="day-num">{day.getDate()}</span>
+                    <span className="day-animal" aria-hidden="true">
+                      {animal.emoji}
+                    </span>
+                  </span>
+                  <span className="day-icons">
+                    {shown.map((task) => {
+                      const tint = taskColor(task);
+                      const done = isTaskDoneOn(task, iso);
+                      return (
+                        <span
+                          key={task.id}
+                          className={done ? "day-task-icon done" : "day-task-icon"}
+                          style={{
+                            backgroundColor: `${tint}33`,
+                            boxShadow: `inset 0 0 0 1.5px ${tint}`,
+                          }}
+                          title={task.title}
+                        >
+                          {agendaGlyph(task)}
+                        </span>
+                      );
+                    })}
+                    {extra > 0 && <span className="day-more">+{extra}</span>}
                   </span>
                 </button>
               );
@@ -411,7 +455,16 @@ export default function App() {
                   />
                   <select
                     value={bullet}
-                    onChange={(event) => setBullet(event.target.value as BulletKind)}
+                    onChange={(event) => {
+                      const next = event.target.value as BulletKind;
+                      setBullet(next);
+                      if (
+                        (TASK_COLORS as readonly string[]).includes(color) ||
+                        color === DEFAULT_BULLET_COLORS[bullet]
+                      ) {
+                        setColor(DEFAULT_BULLET_COLORS[next]);
+                      }
+                    }}
                     aria-label="Type de puce"
                   >
                     <option value="task">Tâche</option>
@@ -419,6 +472,111 @@ export default function App() {
                     <option value="note">Note</option>
                   </select>
                 </div>
+
+                <label className="field-label" htmlFor="recurrence">
+                  Fréquence
+                </label>
+                <select
+                  id="recurrence"
+                  className="field"
+                  value={recurrence}
+                  onChange={(event) => setRecurrence(event.target.value as Recurrence)}
+                  aria-label="Fréquence"
+                >
+                  {(Object.keys(RECURRENCE_LABELS) as Recurrence[]).map((key) => (
+                    <option key={key} value={key}>
+                      {RECURRENCE_LABELS[key]}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="date-row">
+                  <label className="date-field">
+                    <span className="field-label">Début (optionnel)</span>
+                    <input
+                      className="field"
+                      type="date"
+                      value={startDate}
+                      onChange={(event) => setStartDate(event.target.value)}
+                      aria-label="Date de début"
+                    />
+                  </label>
+                  <label className="date-field">
+                    <span className="field-label">Fin (optionnel)</span>
+                    <input
+                      className="field"
+                      type="date"
+                      value={endDate}
+                      min={startDate || undefined}
+                      onChange={(event) => setEndDate(event.target.value)}
+                      aria-label="Date de fin"
+                    />
+                  </label>
+                </div>
+
+                <span className="field-label">Icône</span>
+                <div className="icon-picker" role="listbox" aria-label="Choisir une icône">
+                  <button
+                    type="button"
+                    className={!chosenIcon ? "icon-chip active" : "icon-chip"}
+                    aria-label="Sans icône"
+                    onClick={() => {
+                      setIcon("");
+                      setCustomIcon("");
+                    }}
+                  >
+                    ·
+                  </button>
+                  {CUTE_ICONS.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      className={
+                        chosenIcon === emoji && !customIcon.trim()
+                          ? "icon-chip active"
+                          : "icon-chip"
+                      }
+                      aria-label={`Icône ${emoji}`}
+                      onClick={() => {
+                        setIcon(emoji);
+                        setCustomIcon("");
+                      }}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  className="field"
+                  value={customIcon}
+                  onChange={(event) => setCustomIcon(event.target.value)}
+                  placeholder="Ou une autre icône / emoji…"
+                  aria-label="Icône personnalisée"
+                  maxLength={8}
+                />
+
+                <span className="field-label">Couleur</span>
+                <div className="color-picker" role="listbox" aria-label="Choisir une couleur">
+                  {TASK_COLORS.map((swatch) => (
+                    <button
+                      key={swatch}
+                      type="button"
+                      className={color === swatch ? "color-chip active" : "color-chip"}
+                      style={{ backgroundColor: swatch }}
+                      aria-label={`Couleur ${swatch}`}
+                      onClick={() => setColor(swatch)}
+                    />
+                  ))}
+                  <label className="color-custom" title="Couleur libre">
+                    <input
+                      type="color"
+                      value={color}
+                      onChange={(event) => setColor(event.target.value)}
+                      aria-label="Couleur personnalisée"
+                    />
+                  </label>
+                </div>
+
                 <select
                   className="field"
                   value={groupId}
@@ -441,23 +599,48 @@ export default function App() {
                 {dayTasks.length === 0 && (
                   <li className="hint">Rien pour aujourd’hui. Pose une première puce ✨</li>
                 )}
-                {dayTasks.map((task) => (
-                  <li
-                    key={task.id}
-                    className={`task-item ${task.bullet} ${task.done ? "done" : ""}`}
-                  >
-                    <button
-                      className="bullet"
-                      type="button"
-                      aria-label="Marquer comme fait"
-                      onClick={() => toggleTask(task.id)}
-                    />
-                    <span>{task.title}</span>
-                    <button className="tiny" type="button" onClick={() => removeTask(task.id)}>
-                      retirer
-                    </button>
-                  </li>
-                ))}
+                {dayTasks.map((task) => {
+                  const done = isTaskDoneOn(task, selectedDate);
+                  const tint = taskColor(task);
+                  return (
+                    <li
+                      key={task.id}
+                      className={`task-item ${task.bullet} ${done ? "done" : ""}`}
+                      style={{ ["--task-color" as string]: tint }}
+                    >
+                      <button
+                        className="bullet"
+                        type="button"
+                        aria-label="Marquer comme fait"
+                        onClick={() => toggleTask(task.id)}
+                      />
+                      <span
+                        className={task.icon ? "task-icon" : "task-icon fallback"}
+                        aria-hidden="true"
+                        style={{
+                          backgroundColor: `${tint}22`,
+                          boxShadow: `inset 0 0 0 1.5px ${tint}`,
+                        }}
+                      >
+                        {agendaGlyph(task)}
+                      </span>
+                      <div className="task-body">
+                        <span>{task.title}</span>
+                        {task.recurrence !== "once" && (
+                          <small className="task-meta">
+                            {RECURRENCE_LABELS[task.recurrence]}
+                            {task.startDate || task.endDate
+                              ? ` · ${task.startDate ?? "…"} → ${task.endDate ?? "…"}`
+                              : ""}
+                          </small>
+                        )}
+                      </div>
+                      <button className="tiny" type="button" onClick={() => removeTask(task.id)}>
+                        retirer
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
 
               <h3 className="section-title" style={{ marginTop: 22 }}>

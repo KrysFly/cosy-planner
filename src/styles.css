@@ -155,15 +155,15 @@ button {
 }
 
 .day {
-  min-height: 86px;
+  min-height: 92px;
   border: 0;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.55);
-  padding: 8px 6px;
+  padding: 6px 4px 8px;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 2px;
+  align-items: stretch;
+  gap: 4px;
   color: var(--ink);
 }
 
@@ -180,31 +180,51 @@ button {
   box-shadow: inset 0 0 0 2px #9ad9c6;
 }
 
+.day-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px;
+}
+
 .day-num {
   font-weight: 800;
   font-size: 0.95rem;
 }
 
-.day-dots {
+.day-animal {
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.day-icons {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 3px;
-  min-height: 8px;
+  min-height: 22px;
+  padding: 0 2px;
 }
 
-.dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
+.day-task-icon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 8px;
+  font-size: 0.72rem;
+  line-height: 1;
 }
 
-.dot.task {
-  background: #f3a6c0;
+.day-task-icon.done {
+  opacity: 0.45;
 }
-.dot.event {
-  background: #a78bfa;
-}
-.dot.note {
-  background: #67c4ae;
+
+.day-more {
+  font-size: 0.68rem;
+  font-weight: 800;
+  color: var(--muted);
+  line-height: 20px;
 }
 
 .mascot-row {
@@ -238,6 +258,93 @@ button {
   color: var(--ink);
 }
 
+.field-label {
+  display: block;
+  margin: 10px 0 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.date-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.date-field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.date-field .field-label {
+  margin-top: 8px;
+}
+
+.icon-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.icon-chip {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.7);
+  font-size: 1.1rem;
+  line-height: 1;
+  box-shadow: inset 0 0 0 1px rgba(243, 179, 203, 0.35);
+}
+
+.icon-chip.active {
+  background: #fff;
+  box-shadow: inset 0 0 0 2px #f3b3cb;
+}
+
+.color-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.color-chip {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(74, 59, 69, 0.12);
+}
+
+.color-chip.active {
+  box-shadow:
+    inset 0 0 0 2px #fff,
+    0 0 0 2px var(--ink);
+}
+
+.color-custom {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(74, 59, 69, 0.18);
+  cursor: pointer;
+}
+
+.color-custom input {
+  width: 40px;
+  height: 40px;
+  border: 0;
+  padding: 0;
+  transform: translate(-6px, -6px);
+  cursor: pointer;
+}
+
 .primary {
   border: 0;
   border-radius: 14px;
@@ -258,7 +365,7 @@ button {
 
 .task-item {
   display: grid;
-  grid-template-columns: 28px 1fr auto;
+  grid-template-columns: 28px 28px minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
   background: #fff;
@@ -266,26 +373,48 @@ button {
   padding: 8px 10px;
 }
 
-.task-item.done span {
+.task-item.done .task-body > span {
   text-decoration: line-through;
   color: var(--muted);
+}
+
+.task-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.task-icon.fallback {
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.task-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.task-meta {
+  color: var(--muted);
+  font-size: 0.75rem;
 }
 
 .bullet {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  border: 2px solid #f3a6c0;
+  border: 2px solid var(--task-color, #f3a6c0);
   background: transparent;
 }
 
 .task-item.event .bullet {
-  border-color: #a78bfa;
   border-radius: 6px;
-}
-
-.task-item.note .bullet {
-  border-color: #67c4ae;
 }
 
 .tiny {
@@ -397,6 +526,12 @@ button {
   }
 
   .day {
-    min-height: 72px;
+    min-height: 78px;
+  }
+
+  .day-task-icon {
+    width: 18px;
+    height: 18px;
+    font-size: 0.65rem;
   }
 }

@@ -5,8 +5,10 @@ Outil de planification en ligne, façon bullet journal : interface pastel, anima
 ## Fonctions actuelles (bases)
 
 - Connexion **Google** (si un identifiant client est configuré) ou **mode démo**
-- Agenda mensuel illustré (renard, panda, paresseux, poussin, cochon, lapin, chat, loutre)
+- Agenda mensuel illustré : **ourson**, **renard**, **abeille** et une cinquantaine d’animaux kawaii aux pastels assortis
 - Liste de tâches à droite : puces tâche / événement / note
+- Fréquence **une fois / quotidien / hebdomadaire / mensuel**, avec début et fin optionnels
+- Icônes mignonnes (ou emoji libre) et **couleur** au choix, visibles sur l’agenda
 - Groupes avec code d’invitation et plusieurs administrateurs
 - Compteur de verres d’eau, activable si on veut
 - Déploiement **GitHub Pages** (pipeline Actions) — GitLab Pages en secours si des minutes CI restent
