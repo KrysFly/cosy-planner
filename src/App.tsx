@@ -9,6 +9,7 @@ import {
 } from "./animals";
 import {
   createDebouncedSaver,
+  formatCloudError,
   loadUserPlanner,
   plannerDataFromState,
   saveUserPlanner,
@@ -118,20 +119,27 @@ export default function App() {
   const [icon, setIcon] = useState("✨");
   const [customIcon, setCustomIcon] = useState("");
   const [color, setColor] = useState<string>(DEFAULT_BULLET_COLORS.task);
-  const [panel, setPanel] = useState<"tasks" | "groups">("tasks");
+  const [panel, setPanel] = useState<"tasks" | "master" | "groups">("tasks");
   const [groupName, setGroupName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [groupMessage, setGroupMessage] = useState("");
   const [googleReady, setGoogleReady] = useState(false);
   const [totemOpen, setTotemOpen] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
   const totemRef = useRef<HTMLDivElement>(null);
   const skipNextCloudSave = useRef(false);
   const hydratedCloudUid = useRef<string | null>(null);
   const cloudSaver = useRef(
-    createDebouncedSaver(500, (ok) => {
-      setSyncStatus(ok ? "synced" : "error");
+    createDebouncedSaver(500, (ok, error) => {
+      if (ok) {
+        setSyncError(null);
+        setSyncStatus("synced");
+        return;
+      }
+      setSyncError(formatCloudError(error));
+      setSyncStatus("error");
     }),
   );
 
@@ -171,6 +179,7 @@ export default function App() {
         return;
       }
       setSyncStatus("loading");
+      setSyncError(null);
       try {
         const remote = await loadUserPlanner(nextUser.id);
         if (remote) {
@@ -186,10 +195,11 @@ export default function App() {
         hydratedCloudUid.current = nextUser.id;
         setState({ ...migrated, user: nextUser });
         setSyncStatus("synced");
-      } catch {
+      } catch (error) {
         skipNextCloudSave.current = true;
         hydratedCloudUid.current = nextUser.id;
         setState({ ...localSnapshot, user: nextUser });
+        setSyncError(formatCloudError(error));
         setSyncStatus("error");
       }
     },
@@ -237,12 +247,18 @@ export default function App() {
           const nextUser = userFromGoogleJwt(credential);
           hydratedCloudUid.current = null;
           setSyncStatus("idle");
+          setSyncError(null);
           setState({ ...localSnapshot, user: nextUser });
         }
-      } catch {
+      } catch (error) {
+        setSyncError(formatCloudError(error));
         setSyncStatus("error");
-        const nextUser = userFromGoogleJwt(credential);
-        setState({ ...localSnapshot, user: nextUser });
+        // Do not fall back to a JWT-only Google session when Firebase is on:
+        // Firestore would keep failing without Auth.
+        if (!FIREBASE_READY) {
+          const nextUser = userFromGoogleJwt(credential);
+          setState({ ...localSnapshot, user: nextUser });
+        }
       } finally {
         setAuthBusy(false);
       }
@@ -355,6 +371,7 @@ export default function App() {
     cloudSaver.current.cancel();
     hydratedCloudUid.current = null;
     setSyncStatus("idle");
+    setSyncError(null);
     if (FIREBASE_READY && user?.provider === "google") {
       try {
         await signOutCloud();
@@ -531,6 +548,11 @@ export default function App() {
           </div>
           <div id="google-signin" className="google-slot" />
           {authBusy && <p className="hint">Connexion en cours…</p>}
+          {syncError && (
+            <p className="hint sync-error" role="alert">
+              {syncError}
+            </p>
+          )}
           {!GOOGLE_CLIENT_ID && (
             <p className="hint">
               Ajoute <code>VITE_GOOGLE_CLIENT_ID</code> pour activer Google.
@@ -589,6 +611,11 @@ export default function App() {
               Totem · {totem.name} {totem.emoji}
               {statusText ? ` · ${statusText}` : ""}
             </p>
+            {syncError && isCloudUser && (
+              <p className="hint sync-error" role="alert">
+                {syncError}
+              </p>
+            )}
           </div>
           {totemOpen && (
             <div className="totem-popover" role="dialog" aria-label="Choisir ton animal totem">
@@ -741,6 +768,13 @@ export default function App() {
               Tâches
             </button>
             <button
+              className={panel === "master" ? "tab active" : "tab"}
+              type="button"
+              onClick={() => setPanel("master")}
+            >
+              Master TODO
+            </button>
+            <button
               className={panel === "groups" ? "tab active" : "tab"}
               type="button"
               onClick={() => setPanel("groups")}
@@ -749,12 +783,12 @@ export default function App() {
             </button>
           </div>
 
-          {panel === "tasks" ? (
+          {panel === "master" ? (
             <>
               <h3 className="section-title">Master TODO</h3>
               <p className="hint master-hint">
-                Liste générale sans date, toujours en premier. Cocher valide pour le
-                jour sélectionné uniquement.
+                Liste générale sans date. Clique sur la puce pour la griser et
+                valider la tâche pour le jour sélectionné.
               </p>
               <form onSubmit={addMasterTask} className="master-form">
                 <div className="task-form">
@@ -786,6 +820,7 @@ export default function App() {
                         className="bullet"
                         type="button"
                         aria-label="Marquer comme fait pour ce jour"
+                        aria-pressed={done}
                         onClick={() => toggleTask(task.id)}
                       />
                       <span
@@ -811,10 +846,10 @@ export default function App() {
                   );
                 })}
               </ul>
-
-              <h3 className="section-title" style={{ marginTop: 22 }}>
-                Liste du jour
-              </h3>
+            </>
+          ) : panel === "tasks" ? (
+            <>
+              <h3 className="section-title">Liste du jour</h3>
               <form onSubmit={addTask}>
                 <div className="task-form">
                   <input
@@ -982,6 +1017,7 @@ export default function App() {
                         className="bullet"
                         type="button"
                         aria-label="Marquer comme fait"
+                        aria-pressed={done}
                         onClick={() => toggleTask(task.id)}
                       />
                       <span

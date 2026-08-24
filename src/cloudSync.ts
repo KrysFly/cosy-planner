@@ -19,6 +19,43 @@ import {
 
 export type SyncStatus = "idle" | "loading" | "saving" | "synced" | "error" | "offline";
 
+export function formatCloudError(error: unknown): string {
+  const code =
+    error && typeof error === "object" && "code" in error
+      ? String((error as { code: unknown }).code)
+      : "";
+  const message =
+    error && typeof error === "object" && "message" in error
+      ? String((error as { message: unknown }).message)
+      : error instanceof Error
+        ? error.message
+        : "";
+
+  if (code.includes("permission-denied") || message.includes("permission-denied")) {
+    return "Firestore refuse l’accès : active Auth Google et publie les règles (firestore.rules).";
+  }
+  if (
+    code.includes("not-found") ||
+    message.includes("does not exist") ||
+    message.toLowerCase().includes("database")
+  ) {
+    return "Base Firestore absente : crée-la dans Firebase Console → Firestore Database.";
+  }
+  if (code.includes("auth/") || code.startsWith("auth/")) {
+    return `Auth Google Firebase : ${code}. Active le fournisseur Google dans Authentication.`;
+  }
+  if (code.includes("unauthorized-domain") || message.includes("unauthorized-domain")) {
+    return "Domaine non autorisé : ajoute krysfly.github.io dans Authentication → Settings.";
+  }
+  if (code) return `${code}${message ? ` — ${message}` : ""}`;
+  return message || "Erreur de synchronisation inconnue.";
+}
+
+/** Firestore rejects `undefined` fields. */
+function stripUndefined<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 function userDocRef(uid: string) {
   const db = getFirestoreDb();
   if (!db) throw new Error("Firestore non configuré");
@@ -105,7 +142,7 @@ export async function saveUserPlanner(uid: string, data: PlannerData): Promise<v
   await setDoc(
     userDocRef(uid),
     {
-      ...data,
+      ...stripUndefined(data),
       updatedAt: serverTimestamp(),
     },
     { merge: true },
@@ -114,7 +151,7 @@ export async function saveUserPlanner(uid: string, data: PlannerData): Promise<v
 
 export function createDebouncedSaver(
   delayMs = 500,
-  onResult?: (ok: boolean) => void,
+  onResult?: (ok: boolean, error?: unknown) => void,
 ): {
   schedule: (uid: string, data: PlannerData) => void;
   flush: () => Promise<void>;
@@ -130,7 +167,7 @@ export function createDebouncedSaver(
     pending = null;
     inFlight = saveUserPlanner(job.uid, job.data)
       .then(() => onResult?.(true))
-      .catch(() => onResult?.(false))
+      .catch((error) => onResult?.(false, error))
       .finally(() => {
         inFlight = null;
       });

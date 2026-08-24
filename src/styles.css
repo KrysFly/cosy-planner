@@ -541,7 +541,9 @@ button {
 }
 
 .task-item.done .bullet {
-  background: var(--task-color, #f3a6c0);
+  border-color: #b8b0bc;
+  background: #c9c2cc;
+  opacity: 0.85;
 }
 
 .master-hint {
@@ -697,6 +699,7 @@ button {
 
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 12px;
 }
