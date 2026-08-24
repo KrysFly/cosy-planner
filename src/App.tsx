@@ -54,9 +54,22 @@ import {
 const WEEKDAYS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? "";
 const FIREBASE_READY = isFirebaseConfigured();
+const MOBILE_MQ = "(max-width: 860px)";
+
+function isMobileViewport(): boolean {
+  return typeof window !== "undefined" && window.matchMedia(MOBILE_MQ).matches;
+}
 
 function monthLabel(cursor: Date): string {
   return cursor.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+}
+
+function selectedDayLabel(iso: string): string {
+  return new Date(`${iso}T12:00:00`).toLocaleDateString("fr-FR", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  });
 }
 
 function startOfCalendar(cursor: Date): Date {
@@ -127,6 +140,8 @@ export default function App() {
   const [customIcon, setCustomIcon] = useState("");
   const [color, setColor] = useState<string>(DEFAULT_BULLET_COLORS.task);
   const [panel, setPanel] = useState<"tasks" | "master" | "groups">("tasks");
+  const [agendaCollapsed, setAgendaCollapsed] = useState(() => isMobileViewport());
+  const [asideCollapsed, setAsideCollapsed] = useState(false);
   const [addFormOpen, setAddFormOpen] = useState(false);
   const [masterFormOpen, setMasterFormOpen] = useState(false);
   const [groupName, setGroupName] = useState("");
@@ -321,7 +336,7 @@ export default function App() {
       shape: "pill",
       text: "continue_with",
       locale: "fr",
-      width: 320,
+      width: Math.min(320, Math.max(240, slot.clientWidth || 320)),
     });
   }, [googleReady, handleGoogleCredential, state.user]);
 
@@ -381,6 +396,15 @@ export default function App() {
   const chosenIcon = customIcon.trim() || icon;
   const chosenMasterIcon = masterCustomIcon.trim() || masterIcon;
   const statusText = isCloudUser ? syncLabel(syncStatus) : null;
+  const selectedDayText = selectedDayLabel(selectedDate);
+  const asideTitle =
+    panel === "master" ? "Master TODO" : panel === "groups" ? "Groupes" : "Tâches";
+  const asideSummary =
+    panel === "master"
+      ? `${masterTasks.length} item${masterTasks.length === 1 ? "" : "s"}`
+      : panel === "groups"
+        ? `${myGroups.length} groupe${myGroups.length === 1 ? "" : "s"}`
+        : `${dayTasks.length} pour ${selectedDayText}`;
 
   function update(partial: Partial<PlannerState>) {
     setState((current) => ({ ...current, ...partial }));
@@ -831,7 +855,7 @@ export default function App() {
           ) : (
             <div className="avatar" />
           )}
-          <span>{user.name}</span>
+          <span className="user-chip-name">{user.name}</span>
           <button className="ghost" type="button" onClick={() => void logout()}>
             Quitter
           </button>
@@ -839,107 +863,154 @@ export default function App() {
       </header>
 
       <div className="layout">
-        <section className="card">
-          <div className="agenda-head">
+        <section className={agendaCollapsed ? "card panel collapsed" : "card panel"}>
+          <header className="panel-head">
             <button
-              className="round"
               type="button"
-              aria-label="Mois précédent"
-              onClick={() =>
-                setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))
-              }
+              className="panel-toggle"
+              aria-expanded={!agendaCollapsed}
+              aria-controls="agenda-panel-body"
+              aria-label={agendaCollapsed ? "Agrandir le calendrier" : "Réduire le calendrier"}
+              onClick={() => setAgendaCollapsed((open) => !open)}
             >
-              ‹
-            </button>
-            <h2>{monthLabel(cursor)}</h2>
-            <button
-              className="round"
-              type="button"
-              aria-label="Mois suivant"
-              onClick={() =>
-                setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))
-              }
-            >
-              ›
-            </button>
-          </div>
-          <div className="weekdays">
-            {WEEKDAYS.map((label) => (
-              <span key={label}>{label}</span>
-            ))}
-          </div>
-          <div className="month-grid">
-            {monthDays.map((day) => {
-              const iso = todayIso(day);
-              const inMonth = day.getMonth() === cursor.getMonth();
-              const dayMarks = visibleTasks.filter(
-                (task) => !task.master && taskOccursOn(task, iso),
-              );
-              const shown = dayMarks.slice(0, 3);
-              const extra = dayMarks.length - shown.length;
-              const animal = animalForDate(iso);
-              const moodMark = moodEmoji(state.moodByDate[iso]?.mood);
-              return (
-                <button
-                  key={iso}
-                  className={[
-                    "day",
-                    inMonth ? "" : "muted",
-                    iso === selectedDate ? "selected" : "",
-                    iso === todayIso() ? "today" : "",
-                  ].join(" ")}
-                  type="button"
-                  onClick={() => setSelectedDate(iso)}
-                >
-                  <span className="day-top">
-                    <span className="day-num">{day.getDate()}</span>
-                    <span className="day-top-marks" aria-hidden="true">
-                      {moodMark && <span className="day-mood">{moodMark}</span>}
-                      <span className="day-animal">{animal.emoji}</span>
-                    </span>
-                  </span>
-                  <span className="day-icons">
-                    {shown.map((task) => {
-                      const tint = taskColor(task);
-                      const done = isTaskDoneOn(task, iso);
-                      return (
-                        <span
-                          key={task.id}
-                          className={done ? "day-task-icon done" : "day-task-icon"}
-                          style={{
-                            backgroundColor: `${tint}33`,
-                            boxShadow: `inset 0 0 0 1.5px ${tint}`,
-                          }}
-                          title={task.title}
-                        >
-                          {agendaGlyph(task)}
-                        </span>
-                      );
-                    })}
-                    {extra > 0 && <span className="day-more">+{extra}</span>}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-          <div className="mascot-row">
-            <KawaiiAnimal animal={totem.id} size={72} />
-            <div>
-              <strong>{totem.name} veille sur ta journée</strong>
-              <span className="hint">
-                {new Date(`${selectedDate}T12:00:00`).toLocaleDateString("fr-FR", {
-                  weekday: "long",
-                  day: "numeric",
-                  month: "long",
-                })}
-                {" · "}
-                {selectedAnimal.emoji} du jour : {selectedAnimal.name}
+              <span className="panel-toggle-chevron" aria-hidden="true">
+                {agendaCollapsed ? "▸" : "▾"}
               </span>
+              <span className="panel-toggle-text">
+                <strong>{agendaCollapsed ? "Calendrier" : monthLabel(cursor)}</strong>
+                {agendaCollapsed && (
+                  <span className="panel-summary">{selectedDayText}</span>
+                )}
+              </span>
+            </button>
+            {!agendaCollapsed && (
+              <div className="agenda-nav" role="group" aria-label="Navigation mois">
+                <button
+                  className="round"
+                  type="button"
+                  aria-label="Mois précédent"
+                  onClick={() =>
+                    setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))
+                  }
+                >
+                  ‹
+                </button>
+                <button
+                  className="round"
+                  type="button"
+                  aria-label="Mois suivant"
+                  onClick={() =>
+                    setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))
+                  }
+                >
+                  ›
+                </button>
+              </div>
+            )}
+          </header>
+          {!agendaCollapsed && (
+            <div id="agenda-panel-body" className="panel-body">
+              <div className="weekdays">
+                {WEEKDAYS.map((label) => (
+                  <span key={label}>{label}</span>
+                ))}
+              </div>
+              <div className="month-grid">
+                {monthDays.map((day) => {
+                  const iso = todayIso(day);
+                  const inMonth = day.getMonth() === cursor.getMonth();
+                  const dayMarks = visibleTasks.filter(
+                    (task) => !task.master && taskOccursOn(task, iso),
+                  );
+                  const shown = dayMarks.slice(0, 3);
+                  const extra = dayMarks.length - shown.length;
+                  const animal = animalForDate(iso);
+                  const moodMark = moodEmoji(state.moodByDate[iso]?.mood);
+                  return (
+                    <button
+                      key={iso}
+                      className={[
+                        "day",
+                        inMonth ? "" : "muted",
+                        iso === selectedDate ? "selected" : "",
+                        iso === todayIso() ? "today" : "",
+                      ].join(" ")}
+                      type="button"
+                      onClick={() => setSelectedDate(iso)}
+                    >
+                      <span className="day-top">
+                        <span className="day-num">{day.getDate()}</span>
+                        <span className="day-top-marks" aria-hidden="true">
+                          {moodMark && <span className="day-mood">{moodMark}</span>}
+                          <span className="day-animal">{animal.emoji}</span>
+                        </span>
+                      </span>
+                      <span className="day-icons">
+                        {shown.map((task) => {
+                          const tint = taskColor(task);
+                          const done = isTaskDoneOn(task, iso);
+                          return (
+                            <span
+                              key={task.id}
+                              className={done ? "day-task-icon done" : "day-task-icon"}
+                              style={{
+                                backgroundColor: `${tint}33`,
+                                boxShadow: `inset 0 0 0 1.5px ${tint}`,
+                              }}
+                              title={task.title}
+                            >
+                              {agendaGlyph(task)}
+                            </span>
+                          );
+                        })}
+                        {extra > 0 && <span className="day-more">+{extra}</span>}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mascot-row">
+                <KawaiiAnimal animal={totem.id} size={72} />
+                <div>
+                  <strong>{totem.name} veille sur ta journée</strong>
+                  <span className="hint">
+                    {new Date(`${selectedDate}T12:00:00`).toLocaleDateString("fr-FR", {
+                      weekday: "long",
+                      day: "numeric",
+                      month: "long",
+                    })}
+                    {" · "}
+                    {selectedAnimal.emoji} du jour : {selectedAnimal.name}
+                  </span>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
         </section>
 
-        <aside className="card">
+        <aside className={asideCollapsed ? "card panel collapsed" : "card panel"}>
+          <header className="panel-head">
+            <button
+              type="button"
+              className="panel-toggle"
+              aria-expanded={!asideCollapsed}
+              aria-controls="aside-panel-body"
+              aria-label={asideCollapsed ? "Agrandir le journal" : "Réduire le journal"}
+              onClick={() => setAsideCollapsed((open) => !open)}
+            >
+              <span className="panel-toggle-chevron" aria-hidden="true">
+                {asideCollapsed ? "▸" : "▾"}
+              </span>
+              <span className="panel-toggle-text">
+                <strong>{asideTitle}</strong>
+                {asideCollapsed && (
+                  <span className="panel-summary">{asideSummary}</span>
+                )}
+              </span>
+            </button>
+          </header>
+          {!asideCollapsed && (
+            <div id="aside-panel-body" className="panel-body">
           <div className="tabs">
             <button
               className={panel === "tasks" ? "tab active" : "tab"}
@@ -1538,6 +1609,8 @@ export default function App() {
                 })}
               </div>
             </>
+          )}
+            </div>
           )}
         </aside>
       </div>
