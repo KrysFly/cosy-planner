@@ -56,6 +56,7 @@ Pipeline : `.github/workflows/pages.yml` (build Vite → artifact → deploy Pag
 
 URL : **https://krysfly.github.io/cosy-planner/**
 
+Le dépôt doit être **public** (GitHub Free) ou un plan Pro pour activer Pages.  
 Après le premier push sur `main` :
 1. **Settings → Pages** → Source = **GitHub Actions**
 2. Attendre le workflow vert dans l’onglet **Actions**
