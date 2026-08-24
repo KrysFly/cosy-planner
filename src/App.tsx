@@ -111,6 +111,8 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState(todayIso);
   const [title, setTitle] = useState("");
   const [masterTitle, setMasterTitle] = useState("");
+  const [masterIcon, setMasterIcon] = useState("📌");
+  const [masterCustomIcon, setMasterCustomIcon] = useState("");
   const [bullet, setBullet] = useState<BulletKind>("task");
   const [groupId, setGroupId] = useState<string>("");
   const [recurrence, setRecurrence] = useState<Recurrence>("once");
@@ -356,6 +358,7 @@ export default function App() {
   const dayMood = state.moodByDate[selectedDate]?.mood ?? null;
 
   const chosenIcon = customIcon.trim() || icon;
+  const chosenMasterIcon = masterCustomIcon.trim() || masterIcon;
   const statusText = isCloudUser ? syncLabel(syncStatus) : null;
 
   function update(partial: Partial<PlannerState>) {
@@ -422,13 +425,14 @@ export default function App() {
       recurrence: "once",
       startDate: null,
       endDate: null,
-      icon: "📌",
+      icon: chosenMasterIcon || "📌",
       color: DEFAULT_BULLET_COLORS.task,
       doneDates: [],
       master: true,
     };
     update({ tasks: [...state.tasks, task] });
     setMasterTitle("");
+    setMasterCustomIcon("");
   }
 
   function toggleTask(id: string) {
@@ -802,6 +806,46 @@ export default function App() {
                     Ajouter
                   </button>
                 </div>
+                <span className="field-label">Icône</span>
+                <div className="icon-picker" role="listbox" aria-label="Choisir une icône Master TODO">
+                  <button
+                    type="button"
+                    className={!chosenMasterIcon ? "icon-chip active" : "icon-chip"}
+                    aria-label="Sans icône"
+                    onClick={() => {
+                      setMasterIcon("");
+                      setMasterCustomIcon("");
+                    }}
+                  >
+                    ·
+                  </button>
+                  {(["📌", ...CUTE_ICONS] as const).map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      className={
+                        chosenMasterIcon === emoji && !masterCustomIcon.trim()
+                          ? "icon-chip active"
+                          : "icon-chip"
+                      }
+                      aria-label={`Icône ${emoji}`}
+                      onClick={() => {
+                        setMasterIcon(emoji);
+                        setMasterCustomIcon("");
+                      }}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  className="field"
+                  value={masterCustomIcon}
+                  onChange={(event) => setMasterCustomIcon(event.target.value)}
+                  placeholder="Ou une autre icône / emoji…"
+                  aria-label="Icône Master TODO personnalisée"
+                  maxLength={8}
+                />
               </form>
               <ul className="task-list master-list">
                 {masterTasks.length === 0 && (
