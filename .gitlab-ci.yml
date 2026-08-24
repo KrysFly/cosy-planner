@@ -1,0 +1,52 @@
+stages:
+  - build
+  - pages
+
+default:
+  image: node:22-alpine
+
+build:
+  stage: build
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - node_modules/
+  script:
+    - npm ci
+    - |
+      export VITE_BASE_PATH="$(node -e "const p = new URL(process.env.CI_PAGES_URL || 'http://localhost/').pathname; process.stdout.write(p.endsWith('/') ? p : p + '/')")"
+    - echo "VITE_BASE_PATH=${VITE_BASE_PATH}"
+    - |
+      if [ -n "${VITE_GOOGLE_CLIENT_ID:-}" ]; then
+        echo "Google Sign-In: client ID present"
+      else
+        echo "Google Sign-In: VITE_GOOGLE_CLIENT_ID missing (demo login only)"
+      fi
+    - npm run build
+  artifacts:
+    paths:
+      - dist
+    expire_in: 1 day
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
+pages:
+  stage: pages
+  needs:
+    - job: build
+      artifacts: true
+  script:
+    - mv dist public
+    - cp public/index.html public/404.html
+  artifacts:
+    paths:
+      - public
+    expire_in: 1 week
+  environment:
+    name: pages
+    url: $CI_PAGES_URL
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
