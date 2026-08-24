@@ -49,6 +49,8 @@ export type PlannerState = {
   waterByDate: Record<string, WaterDay>;
   waterDefaultGoal: number;
   waterEnabled: boolean;
+  /** Animal totem id — drives UI theme colors. */
+  totemAnimalId: string;
 };
 
 export const STORAGE_KEY = "cosy-planner-v1";
@@ -140,6 +142,7 @@ export function emptyState(): PlannerState {
     waterByDate: {},
     waterDefaultGoal: 8,
     waterEnabled: false,
+    totemAnimalId: "bear",
   };
 }
 
@@ -231,6 +234,10 @@ export function loadState(): PlannerState {
     const base = { ...emptyState(), ...parsed };
     return {
       ...base,
+      totemAnimalId:
+        typeof parsed.totemAnimalId === "string" && parsed.totemAnimalId
+          ? parsed.totemAnimalId
+          : "bear",
       tasks: (parsed.tasks ?? []).map((task) =>
         normalizeTask(task as Partial<Task> & Pick<Task, "id" | "title" | "createdBy">),
       ),

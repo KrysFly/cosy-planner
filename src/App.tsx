@@ -1,5 +1,12 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { animalForDate, ANIMALS, KawaiiAnimal } from "./animals";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  animalForDate,
+  ANIMALS,
+  getAnimal,
+  KawaiiAnimal,
+  themeFromAnimal,
+  type AnimalId,
+} from "./animals";
 import {
   agendaGlyph,
   CUTE_ICONS,
@@ -76,10 +83,40 @@ export default function App() {
   const [joinCode, setJoinCode] = useState("");
   const [groupMessage, setGroupMessage] = useState("");
   const [googleReady, setGoogleReady] = useState(false);
+  const [totemOpen, setTotemOpen] = useState(false);
+  const totemRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     saveState(state);
   }, [state]);
+
+  const totem = getAnimal(state.totemAnimalId);
+  const theme = useMemo(() => themeFromAnimal(totem), [totem]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    for (const [key, value] of Object.entries(theme)) {
+      root.style.setProperty(key, value);
+    }
+  }, [theme]);
+
+  useEffect(() => {
+    if (!totemOpen) return;
+    function onPointerDown(event: MouseEvent) {
+      if (totemRef.current && !totemRef.current.contains(event.target as Node)) {
+        setTotemOpen(false);
+      }
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setTotemOpen(false);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [totemOpen]);
 
   const login = useCallback((user: User) => {
     setState((current) => ({ ...current, user }));
@@ -145,6 +182,11 @@ export default function App() {
 
   function update(partial: Partial<PlannerState>) {
     setState((current) => ({ ...current, ...partial }));
+  }
+
+  function setTotem(id: AnimalId) {
+    update({ totemAnimalId: id });
+    setTotemOpen(false);
   }
 
   function logout() {
@@ -276,7 +318,7 @@ export default function App() {
             tâches en douceur.
           </p>
           <div className="login-animals">
-            {ANIMALS.slice(0, 5).map((animal) => (
+            {ANIMALS.slice(0, 6).map((animal) => (
               <KawaiiAnimal key={animal.id} animal={animal.id} size={64} />
             ))}
           </div>
@@ -309,12 +351,52 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="brand">
-          <KawaiiAnimal animal={selectedAnimal.id} size={56} />
+        <div className="brand" ref={totemRef}>
+          <button
+            type="button"
+            className={totemOpen ? "totem-trigger open" : "totem-trigger"}
+            aria-label={`Changer l’animal totem (actuel : ${totem.name})`}
+            aria-expanded={totemOpen}
+            aria-haspopup="dialog"
+            onClick={() => setTotemOpen((open) => !open)}
+          >
+            <KawaiiAnimal animal={totem.id} size={56} />
+            <span className="totem-caret" aria-hidden="true">
+              ▾
+            </span>
+          </button>
           <div>
             <h1>Cosy Planner</h1>
-            <p>Bullet journal doux · {selectedAnimal.name} du jour</p>
+            <p>
+              Totem · {totem.name} {totem.emoji}
+            </p>
           </div>
+          {totemOpen && (
+            <div className="totem-popover" role="dialog" aria-label="Choisir ton animal totem">
+              <div className="totem-popover-head">
+                <strong>Ton animal totem</strong>
+                <span className="hint">Il colore toute l’interface</span>
+              </div>
+              <div className="totem-grid">
+                {ANIMALS.map((animal) => (
+                  <button
+                    key={animal.id}
+                    type="button"
+                    className={
+                      animal.id === totem.id ? "totem-option active" : "totem-option"
+                    }
+                    onClick={() => setTotem(animal.id)}
+                    title={animal.name}
+                    aria-label={animal.name}
+                    aria-pressed={animal.id === totem.id}
+                  >
+                    <KawaiiAnimal animal={animal.id} size={48} />
+                    <span>{animal.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         <div className="user-chip">
           {user.picture ? (
@@ -410,15 +492,17 @@ export default function App() {
             })}
           </div>
           <div className="mascot-row">
-            <KawaiiAnimal animal={selectedAnimal.id} size={72} />
+            <KawaiiAnimal animal={totem.id} size={72} />
             <div>
-              <strong>{selectedAnimal.name} veille sur ta journée</strong>
+              <strong>{totem.name} veille sur ta journée</strong>
               <span className="hint">
                 {new Date(`${selectedDate}T12:00:00`).toLocaleDateString("fr-FR", {
                   weekday: "long",
                   day: "numeric",
                   month: "long",
                 })}
+                {" · "}
+                {selectedAnimal.emoji} du jour : {selectedAnimal.name}
               </span>
             </div>
           </div>

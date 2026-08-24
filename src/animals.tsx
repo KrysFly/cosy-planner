@@ -707,6 +707,86 @@ export function animalForDate(isoDate: string) {
   return ANIMALS[Math.abs(day) % ANIMALS.length];
 }
 
+export function getAnimal(id: string | null | undefined) {
+  if (id && id in BY_ID) return BY_ID[id as AnimalId];
+  return BY_ID.bear;
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  const raw = hex.replace("#", "");
+  const full =
+    raw.length === 3
+      ? raw
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : raw;
+  const n = Number.parseInt(full, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function rgbToHex(r: number, g: number, b: number): string {
+  return `#${[r, g, b]
+    .map((v) => Math.round(Math.min(255, Math.max(0, v))).toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+function mixHex(a: string, b: string, t: number): string {
+  const [ar, ag, ab] = hexToRgb(a);
+  const [br, bg, bb] = hexToRgb(b);
+  return rgbToHex(ar + (br - ar) * t, ag + (bg - ag) * t, ab + (bb - ab) * t);
+}
+
+function luminance(hex: string): number {
+  const [r, g, b] = hexToRgb(hex);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+}
+
+function softAccent(hex: string, fallback: string): string {
+  return luminance(hex) < 0.35 ? fallback : hex;
+}
+
+export type ThemeVars = Record<`--${string}`, string>;
+
+/** CSS custom properties derived from a totem animal palette. */
+export function themeFromAnimal(animal: (typeof ANIMALS)[number]): ThemeVars {
+  const { primary, secondary, accent, shadow, detail = "#f08a9d" } = animal.colors;
+  const soft = softAccent(accent, detail);
+  const cream = mixHex(secondary, "#ffffff", 0.45);
+  const blush = mixHex(primary, "#ffffff", 0.15);
+  const lilac = mixHex(shadow, secondary, 0.35);
+  const mint = mixHex(secondary, "#d4f5e9", 0.4);
+  const peach = mixHex(primary, "#fff6f0", 0.35);
+  const btnFrom = mixHex(primary, "#ffffff", 0.08);
+  const btnTo = mixHex(soft, detail, 0.35);
+  const [pr, pg, pb] = hexToRgb(primary);
+
+  return {
+    "--cream": cream,
+    "--blush": blush,
+    "--lilac": lilac,
+    "--mint": mint,
+    "--peach": peach,
+    "--ink": "#4a3b45",
+    "--muted": "#8a7380",
+    "--card": "rgba(255, 255, 255, 0.78)",
+    "--shadow": `0 18px 40px rgba(${pr}, ${pg}, ${pb}, 0.22)`,
+    "--btn-from": btnFrom,
+    "--btn-to": btnTo,
+    "--btn-text": luminance(btnFrom) > 0.72 ? "#5a3148" : "#fff8f4",
+    "--ring": mixHex(primary, soft, 0.25),
+    "--ring-strong": soft,
+    "--selected-from": mixHex(primary, "#ffffff", 0.35),
+    "--selected-to": mixHex(shadow, "#ffffff", 0.25),
+    "--today-ring": mixHex(soft, "#9ad9c6", 0.45),
+    "--mascot-from": mixHex(primary, "#ffffff", 0.4),
+    "--mascot-to": mixHex(shadow, "#ffffff", 0.35),
+    "--chip-bg": mixHex(secondary, "#ffffff", 0.2),
+    "--glass-tint": mixHex(primary, "#dff6ff", 0.55),
+    "--glass-edge": mixHex(soft, "#9ad4ea", 0.4),
+  };
+}
+
 type Props = {
   animal: AnimalId;
   size?: number;
