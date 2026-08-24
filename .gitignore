@@ -1,8 +1,9 @@
 node_modules
 dist
-public
 .env
 *.local
 .DS_Store
 .vscode
 .idea
+# GitLab Pages publishes "public/" from CI artifacts only (not from git).
+/public/

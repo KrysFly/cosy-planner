@@ -22,4 +22,10 @@ function gitlabPagesBase(): string {
 export default defineConfig({
   plugins: [react()],
   base: gitlabPagesBase(),
+  // Keep Vite's asset folder off "public" so GitLab Pages can use that name.
+  publicDir: false,
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+  },
 });
