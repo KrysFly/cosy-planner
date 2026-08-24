@@ -9,7 +9,7 @@ Outil de planification en ligne, façon bullet journal : interface pastel, anima
 - Liste de tâches à droite : puces tâche / événement / note
 - Groupes avec code d’invitation et plusieurs administrateurs
 - Compteur de verres d’eau, activable si on veut
-- Déploiement **GitLab Pages** pour tester l’app à plusieurs
+- Déploiement **GitHub Pages** (pipeline Actions) — GitLab Pages en secours si des minutes CI restent
 
 Les données sont stockées dans le navigateur (`localStorage`). C’est suffisant pour poser l’UI et tester Pages. Un vrai partage entre appareils demandera un backend plus tard.
 
@@ -24,7 +24,7 @@ Ouvre l’URL Vite (souvent `http://localhost:5173`).
 
 ## Connexion Google
 
-Le bouton Google n’apparaît que si `VITE_GOOGLE_CLIENT_ID` est fourni **au build** (local `.env` ou variable CI/CD). Il n’existe pas de MCP Google Admin dans Cursor pour créer ce client à ta place : ça se fait dans Google Cloud.
+Le bouton Google n’apparaît que si `VITE_GOOGLE_CLIENT_ID` est fourni **au build** (local `.env` ou variable CI).
 
 1. Ouvre [Google Cloud Console → Identifiants](https://console.cloud.google.com/apis/credentials).
 2. Crée un projet (ex. `cosy-planner`) si besoin.
@@ -33,7 +33,7 @@ Le bouton Google n’apparaît que si `VITE_GOOGLE_CLIENT_ID` est fourni **au bu
 5. Origines JavaScript autorisées (sans chemin) :
    - `http://localhost:5173`
    - `http://127.0.0.1:5173`
-   - l’origine GitLab Pages, par ex. `https://krysfly.gitlab.io` **et** le domaine unique `https://….gitlab.io` affiché dans **Deploy → Pages**
+   - `https://krysfly.github.io` ← site GitHub Pages
 6. Pas besoin d’URI de redirection pour le bouton Sign in with Google (GIS).
 7. Copie l’ID client (`….apps.googleusercontent.com`) :
 
@@ -45,20 +45,29 @@ VITE_GOOGLE_CLIENT_ID=xxxxx.apps.googleusercontent.com
 
 Puis `npm run dev`.
 
-Sur GitLab : **Settings → CI/CD → Variables** → `VITE_GOOGLE_CLIENT_ID`  
-Décoche *Protect variable* si le pipeline `main` ne la voit pas. Ne la masque pas : elle est publique dans le JavaScript du site. Relance le pipeline après l’avoir ajoutée (nouveau build Pages).
+Sur **GitHub** : **Settings → Secrets and variables → Actions → Variables** → `VITE_GOOGLE_CLIENT_ID`  
+(variable de dépôt, pas secrète : elle est publique dans le JS). Relance le workflow après l’avoir ajoutée.
 
 Sans cette variable, **Continuer en mode démo** reste disponible.
 
-## GitLab Pages
+## GitHub Pages
 
-Le pipeline construit l’app et publie le dossier `public` sur la branche par défaut.
+Pipeline : `.github/workflows/pages.yml` (build Vite → artifact → deploy Pages).
 
-URL typique : `https://krysfly.gitlab.io/cosy-planner/` (ou le domaine unique du projet).
+URL : **https://krysfly.github.io/cosy-planner/**
 
-Active Pages si besoin : **Deploy → Pages**. Après le premier pipeline vert sur `main`, le site est testable par toute l’équipe.
+Après le premier push sur `main` :
+1. **Settings → Pages** → Source = **GitHub Actions**
+2. Attendre le workflow vert dans l’onglet **Actions**
 
-## MCP Cursor (GitLab vs Google)
+## GitLab (historique)
 
-- **GitLab** : le MCP officiel GitLab dans Cursor peut lister pipelines, variables, issues et MR une fois authentifié (**Settings → MCP**). Ici l’auth MCP a renvoyé une erreur 404 : reconnecte le serveur GitLab dans Cursor, puis on pourra piloter Pages/CI depuis le chat.
-- **Google Admin / Cloud** : aucun MCP Google n’est branché dans cette session. L’admin OAuth reste la console Google Cloud (ou `gcloud`, non installé ici).
+Le remote `origin` peut rester GitLab. Le déploiement actif pour l’équipe est GitHub Pages tant que le quota CI GitLab Free est saturé (`ci_quota_exceeded`).
+
+## Remotes
+
+```bash
+git remote -v
+# origin  → GitLab (optionnel)
+# github  → https://github.com/KrysFly/cosy-planner.git
+```
