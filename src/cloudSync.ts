@@ -305,6 +305,17 @@ export async function joinSharedGroupByCode(
   return { ok: true, group, alreadyMember: false };
 }
 
+/** Deletes shared group + invite index. Caller must be a group admin (enforced by rules). */
+export async function deleteSharedGroup(group: Group): Promise<void> {
+  const db = requireDb();
+  const batch = writeBatch(db);
+  batch.delete(doc(db, "groups", group.id));
+  if (group.inviteCode) {
+    batch.delete(doc(db, "invites", group.inviteCode.toUpperCase()));
+  }
+  await batch.commit();
+}
+
 /** Shareable invite URL for the current deployment (respects Vite base). */
 export function buildInviteLink(code: string): string {
   const normalized = code.trim().toUpperCase();

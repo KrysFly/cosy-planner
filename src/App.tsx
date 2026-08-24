@@ -11,6 +11,7 @@ import {
   buildInviteLink,
   createDebouncedSaver,
   createSharedGroup,
+  deleteSharedGroup,
   formatCloudError,
   joinSharedGroupByCode,
   loadUserPlanner,
@@ -597,6 +598,36 @@ export default function App() {
     } catch {
       setGroupMessage(`Copie ce lien : ${link}`);
     }
+  }
+
+  async function deleteGroup(group: Group) {
+    if (!user || !group.adminIds.includes(user.id) || groupBusy) return;
+    const ok = window.confirm(
+      `Supprimer le groupe « ${group.name} » ? Les membres ne pourront plus le rejoindre avec ce code.`,
+    );
+    if (!ok) return;
+
+    if (isCloudUser) {
+      setGroupBusy(true);
+      try {
+        await deleteSharedGroup(group);
+      } catch (error) {
+        setGroupMessage(formatCloudError(error));
+        setGroupBusy(false);
+        return;
+      }
+      setGroupBusy(false);
+    }
+
+    setState((current) => ({
+      ...current,
+      groups: current.groups.filter((item) => item.id !== group.id),
+      tasks: current.tasks.map((task) =>
+        task.groupId === group.id ? { ...task, groupId: null } : task,
+      ),
+    }));
+    if (groupId === group.id) setGroupId("");
+    setGroupMessage(`Groupe « ${group.name} » supprimé.`);
   }
 
   useEffect(() => {
@@ -1433,20 +1464,45 @@ export default function App() {
                 )}
                 {myGroups.map((group) => {
                   const isAdmin = group.adminIds.includes(user.id);
+                  const inviteLink = isAdmin ? buildInviteLink(group.inviteCode) : null;
                   return (
                     <article key={group.id} className="group-card">
-                      <strong>{group.name}</strong>
-                      <div className="hint">Code : {group.inviteCode}</div>
-                      <div className="group-invite-actions">
-                        <button
-                          className="tiny"
-                          type="button"
-                          onClick={() => void copyInviteLink(group)}
-                        >
-                          {copiedLinkFor === group.id ? "Lien copié" : "Copier le lien"}
-                        </button>
+                      <div className="group-card-head">
+                        <strong>{group.name}</strong>
+                        {isAdmin && <span className="badge">admin</span>}
                       </div>
-                      {isAdmin && <span className="badge">admin</span>}
+                      {isAdmin && inviteLink && (
+                        <div className="group-invite">
+                          <div className="hint">Code : {group.inviteCode}</div>
+                          <a
+                            className="group-invite-link"
+                            href={inviteLink}
+                            onClick={(event) => event.preventDefault()}
+                          >
+                            {inviteLink}
+                          </a>
+                          <div className="group-invite-actions">
+                            <button
+                              className="tiny"
+                              type="button"
+                              onClick={() => void copyInviteLink(group)}
+                            >
+                              {copiedLinkFor === group.id ? "Lien copié" : "Copier le lien"}
+                            </button>
+                            <button
+                              className="tiny danger"
+                              type="button"
+                              disabled={groupBusy}
+                              onClick={() => void deleteGroup(group)}
+                            >
+                              Supprimer
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {!isAdmin && (
+                        <div className="hint">Membre · code géré par un admin</div>
+                      )}
                       <ul className="hint">
                         {group.memberIds.map((memberId) => (
                           <li key={memberId}>

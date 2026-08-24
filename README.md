@@ -83,7 +83,7 @@ Sans Firebase, la connexion Google peut s’afficher mais la sync cloud reste in
 3. **Copier le lien** produit une URL du type `…/cosy-planner/?join=ABC123`.
 4. La personne invitée ouvre le lien, se connecte : le code est lu, le panneau Groupes s’ouvre, et l’adhésion est tentée automatiquement.
 
-Collections Firestore utilisées : `groups/{groupId}`, `invites/{CODE}` (en plus de `users/{uid}`). Après un changement de [`firestore.rules`](firestore.rules), republie les règles dans la console Firebase.
+Collections Firestore utilisées : `groups/{groupId}`, `invites/{CODE}` (en plus de `users/{uid}`). Après un changement de [`firestore.rules`](firestore.rules), republie les règles dans la console Firebase (suppression de groupe incluse).
 
 ## GitHub Pages
 

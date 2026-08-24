@@ -785,11 +785,42 @@ button {
   padding: 12px;
 }
 
+.group-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.group-invite {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.group-invite-link {
+  font-size: 0.78rem;
+  word-break: break-all;
+  color: color-mix(in srgb, var(--ink) 72%, var(--lilac));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .group-invite-actions {
-  margin: 6px 0 8px;
+  margin: 2px 0 4px;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.tiny.danger {
+  background: color-mix(in srgb, #e07070 22%, white);
+  color: #8a3030;
+}
+
+.tiny.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, #e07070 38%, white);
 }
 
 .badge {
