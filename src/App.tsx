@@ -123,6 +123,7 @@ export default function App() {
   const [color, setColor] = useState<string>(DEFAULT_BULLET_COLORS.task);
   const [panel, setPanel] = useState<"tasks" | "master" | "groups">("tasks");
   const [addFormOpen, setAddFormOpen] = useState(false);
+  const [masterFormOpen, setMasterFormOpen] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [groupMessage, setGroupMessage] = useState("");
@@ -436,6 +437,7 @@ export default function App() {
     update({ tasks: [...state.tasks, task] });
     setMasterTitle("");
     setMasterCustomIcon("");
+    setMasterFormOpen(false);
   }
 
   function toggleTask(id: string) {
@@ -821,59 +823,80 @@ export default function App() {
                 Liste générale sans date. Clique sur la puce pour la griser et
                 valider la tâche pour le jour sélectionné.
               </p>
-              <form onSubmit={addMasterTask} className="master-form">
-                <div className="task-form">
-                  <input
-                    value={masterTitle}
-                    onChange={(event) => setMasterTitle(event.target.value)}
-                    placeholder="Une tâche récurrente du quotidien…"
-                    aria-label="Nouvelle Master TODO"
-                  />
-                  <button className="primary" type="submit">
-                    Ajouter
-                  </button>
-                </div>
-                <span className="field-label">Icône</span>
-                <div className="icon-picker" role="listbox" aria-label="Choisir une icône Master TODO">
-                  <button
-                    type="button"
-                    className={!chosenMasterIcon ? "icon-chip active" : "icon-chip"}
-                    aria-label="Sans icône"
-                    onClick={() => {
-                      setMasterIcon("");
-                      setMasterCustomIcon("");
-                    }}
+              <button
+                type="button"
+                className={masterFormOpen ? "add-toggle open" : "add-toggle"}
+                aria-expanded={masterFormOpen}
+                aria-controls="add-master-form"
+                onClick={() => setMasterFormOpen((open) => !open)}
+              >
+                <span aria-hidden="true">{masterFormOpen ? "▾" : "▸"}</span>
+                Ajout d&apos;une Master TODO
+              </button>
+              {masterFormOpen && (
+                <form
+                  id="add-master-form"
+                  onSubmit={addMasterTask}
+                  className="master-form"
+                >
+                  <div className="task-form">
+                    <input
+                      value={masterTitle}
+                      onChange={(event) => setMasterTitle(event.target.value)}
+                      placeholder="Une tâche récurrente du quotidien…"
+                      aria-label="Nouvelle Master TODO"
+                      autoFocus
+                    />
+                    <button className="primary" type="submit">
+                      Ajouter
+                    </button>
+                  </div>
+                  <span className="field-label">Icône</span>
+                  <div
+                    className="icon-picker"
+                    role="listbox"
+                    aria-label="Choisir une icône Master TODO"
                   >
-                    ·
-                  </button>
-                  {(["📌", ...CUTE_ICONS] as const).map((emoji) => (
                     <button
-                      key={emoji}
                       type="button"
-                      className={
-                        chosenMasterIcon === emoji && !masterCustomIcon.trim()
-                          ? "icon-chip active"
-                          : "icon-chip"
-                      }
-                      aria-label={`Icône ${emoji}`}
+                      className={!chosenMasterIcon ? "icon-chip active" : "icon-chip"}
+                      aria-label="Sans icône"
                       onClick={() => {
-                        setMasterIcon(emoji);
+                        setMasterIcon("");
                         setMasterCustomIcon("");
                       }}
                     >
-                      {emoji}
+                      ·
                     </button>
-                  ))}
-                </div>
-                <input
-                  className="field"
-                  value={masterCustomIcon}
-                  onChange={(event) => setMasterCustomIcon(event.target.value)}
-                  placeholder="Ou une autre icône / emoji…"
-                  aria-label="Icône Master TODO personnalisée"
-                  maxLength={8}
-                />
-              </form>
+                    {(["📌", ...CUTE_ICONS] as const).map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        className={
+                          chosenMasterIcon === emoji && !masterCustomIcon.trim()
+                            ? "icon-chip active"
+                            : "icon-chip"
+                        }
+                        aria-label={`Icône ${emoji}`}
+                        onClick={() => {
+                          setMasterIcon(emoji);
+                          setMasterCustomIcon("");
+                        }}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    className="field"
+                    value={masterCustomIcon}
+                    onChange={(event) => setMasterCustomIcon(event.target.value)}
+                    placeholder="Ou une autre icône / emoji…"
+                    aria-label="Icône Master TODO personnalisée"
+                    maxLength={8}
+                  />
+                </form>
+              )}
               <ul className="task-list master-list">
                 {masterTasks.length === 0 && (
                   <li className="hint">Aucune Master TODO pour l’instant.</li>
