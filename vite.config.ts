@@ -31,8 +31,8 @@ function pagesBase(): string {
 export default defineConfig({
   plugins: [react()],
   base: pagesBase(),
-  // Keep Vite's asset folder off "public" so CI Pages can use that name.
-  publicDir: false,
+  // Static assets (favicon, etc.). Keep off "public" so CI Pages can use that name.
+  publicDir: "static",
   build: {
     outDir: "dist",
     emptyOutDir: true,
